@@ -27,7 +27,7 @@ DEFAULTS <- list(
 
 # --- UI 部分 ---
 ui <- navbarPage(
-  title = "APC 可视化分析平台",
+  title = "APC visualization platform",
   id = "main_nav",
   theme = NULL,
 
@@ -35,7 +35,7 @@ ui <- navbarPage(
   # 页面 1: 数据输入 (Data Input)
   # =========================================================
   tabPanel(
-    "数据输入 (Data Input)",
+    "Data Input",
     value = "tab_input",
     tags$head(
       tags$style(HTML(
@@ -151,7 +151,7 @@ ui <- navbarPage(
   # 页面 2: 分析结果 (Analysis Result)
   # =========================================================
   tabPanel(
-    "分析结果 (Analysis Report)",
+    "Analysis Report",
     value = "tab_analysis",
     fluidRow(
       column(
@@ -206,7 +206,7 @@ server <- function(input, output, session) {
   })
 
   # =========================================================
-  # 【补回来的逻辑】: 年龄 > 105 时的软性警告弹窗
+  # 年龄 > 105 时的软性警告弹窗
   # =========================================================
   observeEvent(input$age_end, {
     req(input$age_end)
