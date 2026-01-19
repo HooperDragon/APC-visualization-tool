@@ -2,6 +2,7 @@ library(shiny)
 library(DT)
 library(plotly)
 library(ggplot2)
+library(ggsci)
 library(tidyr)
 library(dplyr)
 library(haven)
@@ -19,7 +20,7 @@ source("modules/mod_descriptive.R")
 # --- 默认参数 ---
 DEFAULTS <- list(
   period_start = 2000,
-  period_end = 2023,
+  period_end = 2025,
   age_start = 0,
   age_end = 105,
   intervals = 5
@@ -251,18 +252,24 @@ server <- function(input, output, session) {
   uploaded_data <- mod_upload_server("upload_module_1")
 
   # 3. 处理数据
-  analysis_ready_data <- reactive({
+analysis_ready_data <- reactive({
     req(uploaded_data())
-    df <- uploaded_data()
-
-    df_filtered <- df %>%
-      filter(
-        Age >= input$age_start,
-        Age <= input$age_end,
-        Period >= input$period_start,
-        Period <= input$period_end
-      )
-    return(df_filtered)
+    raw_df <- uploaded_data()
+    
+    # 构造参数列表
+    params <- list(
+      intervals = input$intervals,
+      age_start = input$age_start,
+      age_end   = input$age_end,
+      period_start = input$period_start,
+      period_end   = input$period_end
+    )
+    
+    # 调用 R/descriptive.R 里的计算函数
+    # 这一步会返回包含 age_group, rate, period 等列的汇总表
+    res_df <- get_descriptive_data(raw_df, params)
+    
+    return(res_df)
   })
 
   # 4. 调用描述性分析模块
@@ -286,3 +293,4 @@ server <- function(input, output, session) {
 }
 
 shinyApp(ui, server)
+

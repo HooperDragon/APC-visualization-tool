@@ -25,40 +25,29 @@ mod_descriptive_ui <- function(id) {
   )
 }
 
-# --- Server 部分 ---
+# --- Server ---
 mod_descriptive_server <- function(id, data_r) {
   moduleServer(id, function(input, output, session) {
     ns <- session$ns
     
-    # 1. 动态生成滑块 (根据数据的 Period 范围)
-    output$slider_ui <- renderUI({
-      df <- data_r()
-      req(df)
-      
-      periods <- sort(unique(df$Period))
-      sliderInput(ns("period_slice"), "Select Period Slice:",
-                  min = min(periods), 
-                  max = max(periods), 
-                  value = median(periods), 
-                  step = periods[2] - periods[1], # 自动识别步长
-                  animate = animationOptions(interval = 1000, loop = FALSE)) # 增加播放按钮
-    })
+    # ... (滑块逻辑保持不变) ...
     
-    # 2. 渲染左侧 3D 图
+    # 渲染左侧 3D 图
     output$plot_3d <- renderPlotly({
       df <- data_r()
       req(df)
-      # 调用 R/plots.R 里的函数
-      plot_3d_surface(df)
+      
+      # 这里先对 df 进行处理，生成 descriptive 数据
+      # 我们需要获取 Parameters 里的间隔设置
+      # 但目前 data_r 传进来的是原始 df。
+      # 这是一个架构小问题：我们需要在这里调用 get_descriptive_data
+      
+      # 暂时为了跑通，假设 data_r() 已经是处理好 descriptive 数据
+      # (下一条回复我们会修正 app.R 里的数据传递逻辑)
+      
+      plot_3d_apc(df) 
     })
     
-    # 3. 渲染右侧 2D 切面图 (与滑块联动)
-    output$plot_2d <- renderPlot({
-      df <- data_r()
-      req(input$period_slice)
-      
-      # 调用 R/plots.R 里的函数
-      plot_period_slice(df, input$period_slice)
-    })
+    # ... (2D图逻辑) ...
   })
 }
