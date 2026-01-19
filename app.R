@@ -8,10 +8,12 @@ library(dplyr)
 library(haven)
 library(readxl)
 library(tools)
+library(shinyWidgets)
 
 # 手动加载 R 文件夹下的函数
 source("R/data_clean.R")
 source("R/plots.R")
+source("R/descriptive.R")
 
 # 加载模块
 source("modules/mod_upload.R")
@@ -252,23 +254,23 @@ server <- function(input, output, session) {
   uploaded_data <- mod_upload_server("upload_module_1")
 
   # 3. 处理数据
-analysis_ready_data <- reactive({
+  analysis_ready_data <- reactive({
     req(uploaded_data())
     raw_df <- uploaded_data()
-    
+
     # 构造参数列表
     params <- list(
       intervals = input$intervals,
       age_start = input$age_start,
-      age_end   = input$age_end,
+      age_end = input$age_end,
       period_start = input$period_start,
-      period_end   = input$period_end
+      period_end = input$period_end
     )
-    
+
     # 调用 R/descriptive.R 里的计算函数
     # 这一步会返回包含 age_group, rate, period 等列的汇总表
     res_df <- get_descriptive_data(raw_df, params)
-    
+
     return(res_df)
   })
 
@@ -293,4 +295,3 @@ analysis_ready_data <- reactive({
 }
 
 shinyApp(ui, server)
-

@@ -47,7 +47,7 @@ get_descriptive_data <- function(df, params) {
     summarise(
       # 计算发病率：Disease 列中 1 是阳性，0 是阴性
       # mean(Disease) 即为发病率 (Rate)
-      Rate = mean(Disease, na.rm = TRUE),
+      Rate = 100 * mean(Disease, na.rm = TRUE),
       
       # 同时也计算一下样本量，万一以后要算置信区间
       Count = n(),
