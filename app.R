@@ -10,14 +10,16 @@ library(readxl)
 library(tools)
 library(shinyWidgets)
 
-# 手动加载 R 文件夹下的函数
+# 加载 R 文件夹下的函数
 source("R/data_clean.R")
 source("R/plots.R")
 source("R/descriptive.R")
+source("R/hapc_model.R")
 
 # 加载模块
 source("modules/mod_upload.R")
 source("modules/mod_descriptive.R")
+source("modules/mod_apc_result.R")
 
 # --- 默认参数 ---
 DEFAULTS <- list(
@@ -126,6 +128,67 @@ ui <- navbarPage(
             "Intervals (year)",
             value = DEFAULTS$intervals
           ),
+          hr(),
+          h4("Model Specification (SPSS Style)"),
+
+          # 1. 变量选择池 (排除 ID 列，保留 Age, Sex 等)
+          selectInput(
+            "model_vars",
+            "Select Variables:",
+            choices = NULL,
+            multiple = TRUE,
+            selectize = TRUE
+          ),
+
+          # 2. 构建按钮
+          div(
+            style = "display: flex; gap: 5px; margin-bottom: 10px;",
+            actionButton(
+              "add_main_effect",
+              "Add Main",
+              class = "btn-xs btn-primary"
+            ),
+            actionButton(
+              "add_interaction",
+              "Add Interaction (*)",
+              class = "btn-xs btn-warning"
+            ),
+            actionButton("clear_formula", "Clear", class = "btn-xs btn-default")
+          ),
+
+          # 3. 固定效应公式显示框 (用户也可以手动修)
+          textAreaInput(
+            "fixed_formula",
+            "Fixed Effects Structure:",
+            value = "age_c + age_c2", # 默认必须有年龄
+            rows = 3,
+            resize = "vertical"
+          ),
+
+          tags$small(
+            style = "color:grey;",
+            "Tip: Select 2 or 3 vars and click 'Interaction' to add terms like 'sex:residence'."
+          ),
+
+          br(),
+          hr(),
+
+          # 4. 随机斜率设置 (Random Slopes)
+          h5("Random Effects (Slopes)"),
+          pickerInput(
+            "period_slopes",
+            "Vars varying by Period (cov | period):",
+            choices = NULL,
+            multiple = TRUE,
+            options = list(`actions-box` = TRUE)
+          ),
+          pickerInput(
+            "cohort_slopes",
+            "Vars varying by Cohort (cov | cohort):",
+            choices = NULL,
+            multiple = TRUE,
+            options = list(`actions-box` = TRUE)
+          ),
 
           # 错误提示框 (用于显示红色警告)
           uiOutput("validation_alert")
@@ -162,12 +225,25 @@ ui <- navbarPage(
         div(style = "margin-top: 20px;", mod_descriptive_ui("desc_module_1"))
       )
     )
+  ),
+
+  # =========================================================
+  # 页面 3: 模型结果 (Model Results)
+  # =========================================================
+  tabPanel(
+    "Model Results",
+    value = "tab_model",
+    mod_apc_result_ui("apc_result_1")
   )
 )
 
 # --- Server 部分 ---
 server <- function(input, output, session) {
-  # 1. 存储硬性参数错误信息 (负数、Start>End 等)
+  # =========================================================
+  # 1. 基础验证与警告 (Basic Validation)
+  # =========================================================
+
+  # 存储硬性参数错误信息
   validation_error_msg <- reactive({
     req(
       input$period_start,
@@ -208,18 +284,13 @@ server <- function(input, output, session) {
     )
   })
 
-  # =========================================================
   # 年龄 > 105 时的软性警告弹窗
-  # =========================================================
   observeEvent(input$age_end, {
     req(input$age_end)
-
-    # 1. 如果有红色硬性错误（比如负数），先不弹窗，优先显示红色报错
     if (!is.null(validation_error_msg())) {
       return()
     }
 
-    # 2. 如果数值大于 105，触发弹窗
     if (input$age_end > 105) {
       showModal(modalDialog(
         title = "Warning: Unusual Age Range",
@@ -229,31 +300,90 @@ server <- function(input, output, session) {
           tags$p("Are you sure you want to proceed?")
         ),
         footer = tagList(
-          # 两个按钮：样式在 UI 的 CSS 里定义了
-          actionButton("cancel_age", "Cancel (Reset to 105)"),
-          actionButton("confirm_age", "Confirm (Keep value)")
+          actionButton(
+            "cancel_age",
+            "Cancel (Reset to 105)",
+            id = "cancel_age"
+          ),
+          actionButton(
+            "confirm_age",
+            "Confirm (Keep value)",
+            id = "confirm_age"
+          )
         ),
-        easyClose = FALSE # 强制用户点击按钮才能关闭
+        easyClose = FALSE
       ))
     }
   })
 
-  # 监听“取消”按钮
   observeEvent(input$cancel_age, {
     removeModal()
-    updateNumericInput(session, "age_end", value = 105) # 重置回 105
+    updateNumericInput(session, "age_end", value = 105)
+  })
+  observeEvent(input$confirm_age, {
+    removeModal()
   })
 
-  # 监听“确认”按钮
-  observeEvent(input$confirm_age, {
-    removeModal() # 仅关闭弹窗，保留当前的大数值
-  })
+  # =========================================================
+  # 2. 数据上传与清洗 (Data Upload)
   # =========================================================
 
-  # 2. 调用上传模块
+  # 调用上传模块
   uploaded_data <- mod_upload_server("upload_module_1")
 
-  # 3. 处理数据
+  # --- 监听数据上传，更新模型构建器的变量选择列表 ---
+  observeEvent(uploaded_data(), {
+    df <- uploaded_data()
+    req(df)
+
+    # 获取所有列名
+    all_vars <- names(df)
+    # 排除不需要放入模型的列 (Age, Period, Disease 已经默认处理，Disease 是因变量)
+    exclude_vars <- c("Period", "period", "Disease", "disease", "Age", "age")
+
+    # 剩余的作为潜在协变量
+    choices_vars <- setdiff(all_vars, exclude_vars)
+
+    # 这是一个小技巧：我们在 hapc_model.R 里生成了 'age_c' (中心化年龄)
+    # 所以我们在选项里手动加上 'age_c'，方便用户构建交互项
+    choices_vars <- c("age_c", choices_vars)
+
+    # 更新 UI
+    updateSelectInput(session, "model_vars", choices = choices_vars)
+
+    # Random slopes 选择：排除 age_c（年龄随 period/cohort 的随机斜率没有意义且容易误导）
+    slope_choices <- setdiff(choices_vars, "age_c")
+    updatePickerInput(
+      session,
+      "period_slopes",
+      choices = slope_choices,
+      selected = character(0)
+    )
+    updatePickerInput(
+      session,
+      "cohort_slopes",
+      choices = slope_choices,
+      selected = character(0)
+    )
+
+    # 默认：把所有协变量自动纳入主效应（保持 age_c + age_c2 必含）
+    covs_for_default <- setdiff(choices_vars, "age_c")
+    default_fixed <- "age_c + age_c2"
+    if (length(covs_for_default) > 0) {
+      default_fixed <- paste(
+        default_fixed,
+        "+",
+        paste(covs_for_default, collapse = " + ")
+      )
+    }
+    updateTextAreaInput(session, "fixed_formula", value = default_fixed)
+  })
+
+  # =========================================================
+  # 3. 描述性分析逻辑 (Descriptive Analysis)
+  # =========================================================
+
+  # 根据参数筛选数据
   analysis_ready_data <- reactive({
     req(uploaded_data())
     raw_df <- uploaded_data()
@@ -267,31 +397,194 @@ server <- function(input, output, session) {
       period_end = input$period_end
     )
 
-    # 调用 R/descriptive.R 里的计算函数
-    # 这一步会返回包含 age_group, rate, period 等列的汇总表
+    # 调用计算函数
     res_df <- get_descriptive_data(raw_df, params)
-
     return(res_df)
   })
 
-  # 4. 调用描述性分析模块
+  # 调用描述性分析模块
   mod_descriptive_server("desc_module_1", data_r = analysis_ready_data)
 
-  # 5. 运行跳转逻辑
-  observeEvent(input$run_btn, {
-    if (!is.null(validation_error_msg())) {
-      showNotification("请先修正左侧红色的参数错误！", type = "error")
-      return()
+  # =========================================================
+  # 4. 模型构建器逻辑 (Model Builder Logic)
+  # =========================================================
+
+  # 添加主效应
+  observeEvent(input$add_main_effect, {
+    req(input$model_vars)
+    current <- input$fixed_formula
+    new_terms <- paste(input$model_vars, collapse = " + ")
+
+    if (current == "") {
+      updateTextAreaInput(session, "fixed_formula", value = new_terms)
+    } else {
+      updateTextAreaInput(
+        session,
+        "fixed_formula",
+        value = paste(current, "+", new_terms)
+      )
     }
 
-    if (is.null(uploaded_data())) {
-      showNotification("请先上传数据文件！", type = "error")
-      return()
-    }
-
-    showNotification("分析开始！正在生成图表...", type = "message")
-    updateNavbarPage(session, "main_nav", selected = "tab_analysis")
+    # 每次添加后清空选择，方便下次选择
+    updateSelectInput(session, "model_vars", selected = character(0))
   })
+
+  # 添加交互项
+  observeEvent(input$add_interaction, {
+    req(input$model_vars)
+    if (length(input$model_vars) < 2) {
+      showNotification(
+        "Please select at least 2 variables for interaction.",
+        type = "warning"
+      )
+      return()
+    }
+
+    current <- input$fixed_formula
+    new_term <- paste(input$model_vars, collapse = ":")
+
+    if (current == "") {
+      updateTextAreaInput(session, "fixed_formula", value = new_term)
+    } else {
+      updateTextAreaInput(
+        session,
+        "fixed_formula",
+        value = paste(current, "+", new_term)
+      )
+    }
+
+    # 每次添加后清空选择，方便下次选择
+    updateSelectInput(session, "model_vars", selected = character(0))
+  })
+
+  # 清空公式
+  observeEvent(input$clear_formula, {
+    updateTextAreaInput(session, "fixed_formula", value = "age_c + age_c2")
+  })
+
+  # =========================================================
+  # 5. 运行分析核心逻辑 (Run Analysis)
+  # =========================================================
+
+  # 存储模型结果的 Reactive Values
+  model_results <- reactiveValues(model = NULL, summary_table = NULL)
+
+  observeEvent(input$run_btn, {
+    # A. 基础检查
+    if (!is.null(validation_error_msg())) {
+      showNotification("Please fix invalid parameters first!", type = "error")
+      return()
+    }
+    if (is.null(uploaded_data())) {
+      showNotification("Please upload data first!", type = "error")
+      return()
+    }
+
+    showNotification(
+      "Analysis started! Building HAPC model...",
+      type = "message"
+    )
+
+    # 跳转到结果页
+    updateNavbarPage(session, "main_nav", selected = "tab_analysis")
+
+    # --- B. 准备模型数据 ---
+    raw_df <- uploaded_data()
+
+    # 构造参数
+    params <- list(
+      intervals = input$intervals
+      # age_start 等在 prepare_hapc_data 内部动态计算，或者也可以传进去
+    )
+
+    # 1. 解析公式中用到的所有变量，以便在预处理时转为因子
+    # 使用正则提取变量名，排除 age_c, age_c2 和数字
+    formula_vars <- unique(unlist(strsplit(
+      input$fixed_formula,
+      "[\\+\\*\\:]|\\s+"
+    )))
+    formula_vars <- setdiff(formula_vars, c("age_c", "age_c2", "", "1", "0"))
+
+    # 还要加上随机斜率里选到的变量（用于因子化/建模）
+    all_covariates <- unique(c(
+      formula_vars,
+      input$period_slopes,
+      input$cohort_slopes
+    ))
+
+    # 2. 数据预处理 (hapc_model.R)
+    data_for_model <- prepare_hapc_data(raw_df, params, all_covariates)
+
+    # --- C. 运行模型 ---
+    # 构造配置列表
+    model_config <- list(
+      fixed_formula = input$fixed_formula,
+      period_slopes = input$period_slopes,
+      cohort_slopes = input$cohort_slopes
+    )
+
+    # 运行 HAPC (hapc_model.R)
+    # 这一步可能会花点时间
+    mod <- run_dynamic_hapc(data_for_model, model_config)
+
+    # --- D. 结果处理与收敛性检查 ---
+
+    if (is.null(mod)) {
+      showNotification(
+        "Model failed to run (Error). Please check your formula or data.",
+        type = "error",
+        duration = NULL
+      )
+      return()
+    }
+
+    # 【核心需求：收敛性警告逻辑】
+    if (isTRUE(attr(mod, "convergence_warning"))) {
+      warning_msg <- "Warning: Model failed to converge. The model may be too complex, please simplify interactions."
+
+      # 弹出持久警告 (duration = NULL)
+      showNotification(warning_msg, type = "warning", duration = NULL)
+    } else {
+      showNotification("Model converged successfully!", type = "message")
+    }
+
+    # 保存模型结果
+    model_results$model <- mod
+
+    # 生成 bruceR 表格 (HTML)
+    model_results$summary_table <- get_fixed_effects_bruceR(mod)
+  })
+
+  # --- E. 渲染模型结果 (如有 UI 对应) ---
+  # 这里假设你在 UI 里放了一个 htmlOutput("model_output_table")
+  output$model_output_table <- renderUI({
+    req(model_results$summary_table)
+    HTML(model_results$summary_table)
+  })
+
+  # ... (在 server 函数的最后) ...
+
+  # 定义一个 reactive 来获取所有协变量名 (用于更新下拉框)
+  covariates_list <- reactive({
+    req(input$fixed_formula)
+    vars <- unique(unlist(strsplit(input$fixed_formula, "[\\+\\*\\:]|\\s+")))
+    setdiff(vars, c("age_c", "age_c2", "", "1", "0"))
+  })
+
+  # 调用结果展示模块
+  # 注意：这里我们传入 reactive 的 model 和 data
+  mod_apc_result_server(
+    "apc_result_1",
+    model_r = reactive(model_results$model),
+    data_r = reactive({
+      # 重新获取最新的 data_model (包含 min_age 属性)
+      raw_df <- uploaded_data()
+      params <- list(intervals = input$intervals)
+      all_covs <- unique(covariates_list())
+      prepare_hapc_data(raw_df, params, all_covs)
+    }),
+    covariates_r = covariates_list
+  )
 }
 
 shinyApp(ui, server)
