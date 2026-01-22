@@ -218,39 +218,73 @@ plot_2d_slice_generic <- function(df, slice_dim, slice_value) {
 # 4. HAPC 结果趋势图 (Line Chart for Model Results)
 # ==============================================================================
 plot_hapc_trend <- function(df, x_label, group_label) {
-  if (is.null(df)) return(NULL)
-  
-  # NPG 配色
-  my_colors <- ggsci::pal_npg()(10)
-  
+  if (is.null(df)) {
+    return(NULL)
+  }
+
+  # 配色方案：Overall 用灰色，分组变量用 NPG 配色
+  # 确保分组颜色与 Overall 不重复
+  groups <- unique(df$group)
+  npg_colors <- ggsci::pal_npg()(10)
+
+  if ("Overall" %in% groups) {
+    # Overall 用深灰色，其他组用 NPG 配色
+    other_groups <- setdiff(groups, "Overall")
+    color_map <- c("Overall" = "#4D4D4D") # 深灰色
+    if (length(other_groups) > 0) {
+      color_map <- c(
+        color_map,
+        setNames(npg_colors[1:length(other_groups)], other_groups)
+      )
+    }
+  } else {
+    # 没有 Overall，直接用 NPG 配色
+    color_map <- setNames(npg_colors[1:length(groups)], groups)
+  }
+
   p <- ggplot(df, aes(x = x_val, y = prob, group = group, color = group)) +
     # 绘制置信区间 (虚线或半透明带)
-    # 这里用虚线，复刻你的手绘图风格
     geom_line(aes(y = lower), linetype = "dashed", alpha = 0.5) +
     geom_line(aes(y = upper), linetype = "dashed", alpha = 0.5) +
-    
+
     # 绘制主线
-    geom_line(size = 1) +
-    geom_point(size = 2, fill = "white", shape = 21) + # 空心点更好看
-    
+    geom_line(linewidth = 1) +
+    geom_point(size = 2, fill = "white", shape = 21) +
+
     # 配色
-    scale_color_manual(values = my_colors) +
-    
+    scale_color_manual(values = color_map) +
+
     # 标签
     labs(
       x = x_label,
-      y = "Predicted Probability (Rate)",
+      y = "Predicted Probability",
       color = group_label,
       title = paste("Trend by", x_label)
     ) +
-    
+
     # 主题
     theme_minimal() +
     theme(
       plot.title = element_text(hjust = 0.5, face = "bold"),
       legend.position = "bottom",
-      axis.line = element_line(color = "black")
+      axis.line = element_line(color = "black"),
+      axis.text.x = element_text(angle = 45, hjust = 1)
     )
-  
+
+  # --- Cohort 特殊处理：每个点都有轴标签 (xxxx-xxxx年) ---
+  if ("x_label" %in% names(df)) {
+    # 获取唯一的 x_val 和对应的 x_label
+    label_df <- df %>%
+      select(x_val, x_label) %>%
+      distinct() %>%
+      arrange(x_val)
+
+    p <- p +
+      scale_x_continuous(
+        breaks = label_df$x_val,
+        labels = label_df$x_label
+      )
+  }
+
   return(p)
 }

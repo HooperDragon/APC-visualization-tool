@@ -1,3 +1,4 @@
+# environment
 library(shiny)
 library(DT)
 library(plotly)
@@ -9,19 +10,20 @@ library(haven)
 library(readxl)
 library(tools)
 library(shinyWidgets)
+library(digest)
 
-# 加载 R 文件夹下的函数
+# load R file
 source("R/data_clean.R")
 source("R/plots.R")
 source("R/descriptive.R")
 source("R/hapc_model.R")
 
-# 加载模块
+# load modules file
 source("modules/mod_upload.R")
 source("modules/mod_descriptive.R")
 source("modules/mod_apc_result.R")
 
-# --- 默认参数 ---
+# default parameters
 DEFAULTS <- list(
   period_start = 2000,
   period_end = 2025,
@@ -37,7 +39,7 @@ ui <- navbarPage(
   theme = NULL,
 
   # =========================================================
-  # 页面 1: 数据输入 (Data Input)
+  # Page 1: Data Input
   # =========================================================
   tabPanel(
     "Data Input",
@@ -65,7 +67,7 @@ ui <- navbarPage(
         }
         h3 { margin-top: 0px; border-bottom: 1px solid #eee; padding-bottom: 10px; margin-bottom: 20px;}
         
-        /* 【新增】弹窗按钮样式：红色确认，蓝色取消 */
+        /* 弹窗按钮样式：红色确认，蓝色取消 */
         #confirm_age { background-color: #d9534f; color: white; }
         #cancel_age { background-color: #5bc0de; color: white; }
       "
@@ -131,7 +133,7 @@ ui <- navbarPage(
           hr(),
           h4("Model Specification (SPSS Style)"),
 
-          # 1. 变量选择池 (排除 ID 列，保留 Age, Sex 等)
+          # 1. 变量选择池
           selectInput(
             "model_vars",
             "Select Variables:",
@@ -156,11 +158,11 @@ ui <- navbarPage(
             actionButton("clear_formula", "Clear", class = "btn-xs btn-default")
           ),
 
-          # 3. 固定效应公式显示框 (用户也可以手动修)
+          # 3. 固定效应公式显示框
           textAreaInput(
             "fixed_formula",
             "Fixed Effects Structure:",
-            value = "age_c + age_c2", # 默认必须有年龄
+            value = "age_c + age_c2", # age effect has to be in the model
             rows = 3,
             resize = "vertical"
           ),
@@ -214,7 +216,7 @@ ui <- navbarPage(
   ),
 
   # =========================================================
-  # 页面 2: 分析结果 (Analysis Result)
+  # Page 2: Analysis Result
   # =========================================================
   tabPanel(
     "Analysis Report",
@@ -228,7 +230,7 @@ ui <- navbarPage(
   ),
 
   # =========================================================
-  # 页面 3: 模型结果 (Model Results)
+  # Page 3: Model Results
   # =========================================================
   tabPanel(
     "Model Results",
@@ -237,7 +239,7 @@ ui <- navbarPage(
   )
 )
 
-# --- Server 部分 ---
+# --- Server ---
 server <- function(input, output, session) {
   # =========================================================
   # 1. 基础验证与警告 (Basic Validation)
@@ -467,7 +469,11 @@ server <- function(input, output, session) {
   # =========================================================
 
   # 存储模型结果的 Reactive Values
-  model_results <- reactiveValues(model = NULL, summary_table = NULL)
+  model_results <- reactiveValues(
+    model = NULL,
+    summary_table = NULL,
+    data_for_model = NULL # 缓存预处理后的数据，避免重复计算
+  )
 
   observeEvent(input$run_btn, {
     # A. 基础检查
@@ -514,6 +520,9 @@ server <- function(input, output, session) {
 
     # 2. 数据预处理 (hapc_model.R)
     data_for_model <- prepare_hapc_data(raw_df, params, all_covariates)
+
+    # 缓存预处理后的数据，避免切换趋势图时重复计算
+    model_results$data_for_model <- data_for_model
 
     # --- C. 运行模型 ---
     # 构造配置列表
@@ -572,17 +581,11 @@ server <- function(input, output, session) {
   })
 
   # 调用结果展示模块
-  # 注意：这里我们传入 reactive 的 model 和 data
+  # 注意：使用缓存的 data_for_model，避免切换趋势图时重复计算
   mod_apc_result_server(
     "apc_result_1",
     model_r = reactive(model_results$model),
-    data_r = reactive({
-      # 重新获取最新的 data_model (包含 min_age 属性)
-      raw_df <- uploaded_data()
-      params <- list(intervals = input$intervals)
-      all_covs <- unique(covariates_list())
-      prepare_hapc_data(raw_df, params, all_covs)
-    }),
+    data_r = reactive(model_results$data_for_model),
     covariates_r = covariates_list
   )
 }

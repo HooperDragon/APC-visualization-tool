@@ -1,7 +1,8 @@
 library(dplyr)
-library(lme4) # 用于混合效应模型 glmer
-library(emmeans) # 用于计算边际均值 (Predicted Probability)
-library(bruceR) # 核心工具：用于优雅地输出模型结果
+library(glmmTMB)
+library(emmeans)
+library(bruceR)
+library(sjPlot)
 
 # ==============================================================================
 # 1. 数据预处理 (Dynamic Data Preparation)
@@ -12,7 +13,7 @@ prepare_hapc_data <- function(df, params, covariates) {
   intv <- params$intervals
 
   # 动态确定年龄基准值 (Centering base)
-  # PDF 中使用 65 岁，这里我们取用户数据中的最小年龄
+  # 取用户数据中的最小年龄
   min_age <- min(df$Age, na.rm = TRUE)
 
   data_model <- df %>%
@@ -37,10 +38,8 @@ prepare_hapc_data <- function(df, params, covariates) {
   # --- D. 动态处理协变量 (因子化) ---
   # 用户选择的协变量通常是分类变量（如 Sex, Urban_Rural）
   # 我们需要确保它们在建模前被转为因子
-  if (length(covariates) > 0) {
-    for (cov in covariates) {
-      data_model[[cov]] <- as.factor(data_model[[cov]])
-    }
+  for (cov in covariates) {
+    data_model[[cov]] <- as.factor(data_model[[cov]])
   }
 
   # 记录一下最小年龄，方便后面画图还原
@@ -94,17 +93,13 @@ run_dynamic_hapc <- function(data_model, config) {
 
   message("Running HAPC with formula: ", final_formula_str)
 
-  # 5. 运行模型 (增加 tryCatch 处理严重报错)
+  # 5. 运行模型
   model <- tryCatch(
     {
-      glmer(
+      glmmTMB(
         formula = as.formula(final_formula_str),
         data = data_model,
-        family = binomial(link = "logit"),
-        control = glmerControl(
-          optimizer = "bobyqa",
-          optCtrl = list(maxfun = 500000)
-        )
+        family = binomial(link = "logit")
       )
     },
     error = function(e) {
@@ -119,16 +114,22 @@ run_dynamic_hapc <- function(data_model, config) {
   # =========================================================
   # 【新增】检测收敛性 (Check Convergence)
   # =========================================================
-  # lme4 会把收敛警告存在 model@optinfo$conv$lme4$messages 里
-  msgs <- model@optinfo$conv$lme4$messages
-
-  # 检查是否存在包含 "converge" 字样的警告
-  if (!is.null(msgs) && any(grepl("converge", msgs, ignore.case = TRUE))) {
-    # 给模型对象打个标签，告诉 app.R 它没收敛
-    attr(model, "convergence_warning") <- TRUE
-  } else {
-    attr(model, "convergence_warning") <- FALSE
+  # glmmTMB 的收敛信息在 sdr/fit 等对象里；这里做一个尽量稳健的软判定
+  conv_warn <- FALSE
+  diag_obj <- tryCatch(glmmTMB::diagnose(model), error = function(e) NULL)
+  if (!is.null(diag_obj)) {
+    txt <- paste(capture.output(diag_obj), collapse = "\n")
+    if (
+      grepl(
+        "non-positive-definite|cannot|failed|converge",
+        txt,
+        ignore.case = TRUE
+      )
+    ) {
+      conv_warn <- TRUE
+    }
   }
+  attr(model, "convergence_warning") <- conv_warn
 
   return(model)
 }
@@ -139,87 +140,22 @@ run_dynamic_hapc <- function(data_model, config) {
 # 返回的是可以直接在 Shiny 的 HTML() 中渲染的代码
 # ==============================================================================
 get_fixed_effects_bruceR <- function(model) {
-  # bruceR::model_summary 底层调用 sjPlot::tab_model
-  # 它会自动计算 Odds Ratios (OR) 和 置信区间 (CI)
-  # 参数 digits = 3 保留三位小数，show.p = TRUE 显示 P 值
+  # 统一使用 sjPlot::tab_model 输出 HTML
 
-  # 我们让它返回 HTML 对象，而不是打印到控制台
-  tab <- model_summary(
+  tab <- sjPlot::tab_model(
     model,
-    std = FALSE, # GLM模型不标准化
-    digits = 3,
+    show.se = TRUE,
+    show.ci = TRUE,
     show.p = TRUE,
-    return.html = TRUE
-  ) # 关键参数：返回HTML代码用于Shiny
-
-  return(tab)
-}
-
-
-# ==============================================================================
-# 4. 提取结果：随机效应 (与之前逻辑一致，适配动态分组)
-# ==============================================================================
-get_random_effects_table <- function(model, type = "period") {
-  rr <- ranef(model, condVar = TRUE)
-  avg_log_odds <- fixef(model)["(Intercept)"]
-
-  # 根据类型选择对应的随机效应列表
-  target_name <- if (type == "period") {
-    "period_factor"
-  } else {
-    "cohort_group_factor"
-  }
-  re_df <- rr[[target_name]]
-
-  res_df <- data.frame(
-    Group = rownames(re_df),
-    u_est = re_df$`(Intercept)`,
-    u_se = sqrt(attr(re_df, "postVar")[1, , ])
-  ) %>%
-    mutate(
-      u_est_lower = u_est - 1.96 * u_se,
-      u_est_upper = u_est + 1.96 * u_se,
-      est_total = avg_log_odds + u_est,
-      prob = 1 / (1 + exp(-est_total)),
-      prob_lower = 1 / (1 + exp(-(avg_log_odds + u_est_lower))),
-      prob_upper = 1 / (1 + exp(-(avg_log_odds + u_est_upper)))
-    ) %>%
-    mutate(across(where(is.numeric), ~ round(., 4))) # 保留4位小数
-
-  return(res_df)
-}
-
-
-# ==============================================================================
-# 5. 提取结果：年龄边际效应 (Age Trend)
-# ==============================================================================
-get_age_trend <- function(model, data_model) {
-  min_age <- attr(data_model, "min_age")
-
-  # 生成从最小年龄到最大年龄的网格，步长为 0.5 (即 5 岁)
-  max_c <- max(data_model$age_c, na.rm = TRUE)
-  age_seq <- seq(0, max_c, by = 1)
-
-  # 使用 emmeans 计算均值
-  emm <- emmeans(
-    model,
-    ~ age_c + age_c2,
-    at = list(age_c = age_seq, age_c2 = age_seq^2),
-    type = "response"
+    digits = 3
   )
 
-  res <- as.data.frame(emm) %>%
-    mutate(
-      # 动态还原真实年龄
-      Age = age_c * 10 + min_age
-    ) %>%
-    select(Age, prob, asymp.LCL, asymp.UCL)
-
-  return(res)
+  return(as.character(tab))
 }
 
+
 # ==============================================================================
-# 6. 通用趋势提取函数 (Get Trend Data)
+# 5. 通用趋势提取函数 (Get Trend Data)
 # 用于 Output Module 3
 # ==============================================================================
 get_model_trend_data <- function(
@@ -229,35 +165,53 @@ get_model_trend_data <- function(
   data_model
 ) {
   # 1. 提取基础信息
-  avg_intercept <- fixef(model)["(Intercept)"]
-  rr <- ranef(model, condVar = TRUE)
+  avg_intercept <- fixef(model)$cond["(Intercept)"]
+
+  # 获取 interval 参数用于生成 cohort 标签
+  intv <- 5 # 默认值
+  if ("cohort_group" %in% names(data_model)) {
+    cohort_vals <- sort(unique(data_model$cohort_group))
+    if (length(cohort_vals) > 1) {
+      intv <- cohort_vals[2] - cohort_vals[1]
+    }
+  }
+
+  # glmmTMB 的 ranef 结构：ranef(model, condVar=TRUE) 返回的是一个列表
+  # postVar 存储在每个分组的 attr(..., "postVar") 中
+  # 注意：glmmTMB 与 lme4 不同，需要直接从 ranef 对象获取
+  rr_full <- ranef(model, condVar = TRUE)
+  rr <- rr_full$cond # 提取条件随机效应部分
 
   res_df <- NULL
 
   # === 情况 A: X 轴是 Age (固定效应) ===
   if (x_axis == "age") {
-    # 构造 emmeans 公式
-    # 如果 group_by 是 "null"，就只看 age
-    # 如果 group_by 是 "sex"，就看 age | sex
-
-    specs <- ~ age_c + age_c2
-    if (group_by != "null") {
-      specs <- as.formula(paste("~ age_c + age_c2 |", group_by))
-    }
-
     # 构造年龄网格
     min_age <- attr(data_model, "min_age")
     max_c <- max(data_model$age_c, na.rm = TRUE)
-    age_seq <- seq(0, max_c, by = 1)
 
-    emm <- emmeans(
-      model,
-      specs,
-      at = list(age_c = age_seq, age_c2 = age_seq^2),
-      type = "response"
-    )
+    # 用 for 循环逐点调用 emmeans，避免笛卡尔积导致参考网格爆炸
+    res_list <- list()
 
-    res_df <- as.data.frame(emm) %>%
+    # 如果需要分层，构造带分组的 specs
+    if (group_by != "null") {
+      specs <- as.formula(paste("~ age_c + age_c2 |", group_by))
+    } else {
+      specs <- ~ age_c + age_c2
+    }
+
+    # 遍历 age_c 从 0 到 max_c，步长 1（即每 10 岁一个点）
+    for (ac in seq(0, floor(max_c * 2), by = 1)) {
+      emm <- emmeans(
+        model,
+        specs,
+        at = list(age_c = ac / 2, age_c2 = (ac / 2)^2),
+        type = "response"
+      )
+      res_list[[length(res_list) + 1]] <- as.data.frame(summary(emm))
+    }
+
+    res_df <- bind_rows(res_list) %>%
       rename(prob = prob, lower = asymp.LCL, upper = asymp.UCL) %>%
       mutate(x_val = age_c * 10 + min_age) # 还原真实年龄
 
@@ -270,25 +224,59 @@ get_model_trend_data <- function(
 
     # === 情况 B: X 轴是 Period 或 Cohort (随机效应) ===
   } else {
-    # 确定目标随机效应名称
+    # 确定目标随机效应名称（兼容不同命名方式）
     re_name <- if (x_axis == "period") {
-      "period_factor"
+      # 尝试两种可能的命名
+      if ("period_factor" %in% names(rr)) "period_factor" else "period"
     } else {
-      "cohort_group_factor"
+      if ("cohort_group_factor" %in% names(rr)) {
+        "cohort_group_factor"
+      } else {
+        "cohort_group"
+      }
     }
 
     # 提取该组的随机效应数据框
     re_df <- rr[[re_name]]
-    postVar <- attr(re_df, "postVar") # 方差用于计算 CI
+
+    if (is.null(re_df)) {
+      # 如果找不到对应的随机效应，返回 NULL
+      return(NULL)
+    }
 
     # 提取行名作为 X 轴的值
     x_values <- as.numeric(rownames(re_df))
+
+    # glmmTMB 获取随机效应标准误：从 model$sdr$diag.cov.random
+    # 需要确定当前随机效应在 sdr$par.random 中的位置
+    sdr <- model$sdr
+
+    # 获取随机效应的标准误
+    if (!is.null(sdr) && !is.null(sdr$diag.cov.random)) {
+      all_se <- sqrt(sdr$diag.cov.random)
+
+      # 确定当前分组的随机效应在总随机效应中的位置
+      # glmmTMB 的随机效应按照 ranef 的顺序排列
+      re_names <- names(rr)
+      start_idx <- 1
+      for (nm in re_names) {
+        if (nm == re_name) {
+          break
+        }
+        start_idx <- start_idx + nrow(rr[[nm]])
+      }
+      end_idx <- start_idx + nrow(re_df) - 1
+
+      u_se <- all_se[start_idx:end_idx]
+    } else {
+      # 无法获取标准误，设为 0
+      u_se <- rep(0, nrow(re_df))
+    }
 
     # --- B1. 总体趋势 (Null Stratification) ---
     if (group_by == "null") {
       # 提取截距的随机效应 (Intercept)
       u_est <- re_df$`(Intercept)`
-      u_se <- sqrt(postVar[1, 1, ])
 
       # 计算概率
       est_total <- avg_intercept + u_est
@@ -324,9 +312,9 @@ get_model_trend_data <- function(
       # 这是一个简化的可视化逻辑，严谨计算需要对照 model matrix
 
       # 提取该变量的固定效应系数
-      fix_slope_name <- grep(group_by, names(fixef(model)), value = TRUE)
+      fix_slope_name <- grep(group_by, names(fixef(model)$cond), value = TRUE)
       fix_slope <- if (length(fix_slope_name) > 0) {
-        fixef(model)[fix_slope_name]
+        fixef(model)$cond[fix_slope_name]
       } else {
         0
       }
@@ -353,6 +341,12 @@ get_model_trend_data <- function(
           lower = prob,
           upper = prob
         )
+    }
+
+    # --- 为 Cohort 添加 x_label (格式: "xxxx-xxxx") ---
+    if (x_axis == "cohort") {
+      res_df <- res_df %>%
+        mutate(x_label = paste0(x_val, "-", x_val + intv - 1))
     }
   }
 
