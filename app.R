@@ -22,6 +22,7 @@ source("R/hapc_model.R")
 source("modules/mod_upload.R")
 source("modules/mod_descriptive.R")
 source("modules/mod_apc_result.R")
+source("modules/mod_download.R")
 
 # default parameters
 DEFAULTS <- list(
@@ -236,6 +237,14 @@ ui <- navbarPage(
     "Model Results",
     value = "tab_model",
     mod_apc_result_ui("apc_result_1")
+  ),
+
+    # =========================================================
+  # 页面 4: 数据导出 (Export)
+  # =========================================================
+  tabPanel("Export Results", value = "tab_export",
+           icon = icon("download"), # 加个图标更直观
+           mod_download_ui("download_module_1")
   )
 )
 
@@ -588,6 +597,13 @@ server <- function(input, output, session) {
     data_r = reactive(model_results$data_for_model),
     covariates_r = covariates_list
   )
+
+  # 调用下载模块
+  # 注意：我们需要把之前算出来的 model_results 和一些趋势数据传进去
+  # 暂时先留空，等下一阶段我们实现下载逻辑时再连接数据
+  mod_download_server("download_module_1", 
+                      model_results = model_results,
+                      trend_data = NULL)
 }
 
 shinyApp(ui, server)

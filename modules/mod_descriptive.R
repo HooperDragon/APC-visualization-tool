@@ -1,3 +1,4 @@
+#ui
 mod_descriptive_ui <- function(id) {
   ns <- NS(id)
   tagList(
@@ -70,6 +71,7 @@ mod_descriptive_ui <- function(id) {
   )
 }
 
+#server
 mod_descriptive_server <- function(id, data_r) {
   moduleServer(id, function(input, output, session) {
     ns <- session$ns
