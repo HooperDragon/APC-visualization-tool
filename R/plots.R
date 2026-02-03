@@ -243,15 +243,50 @@ plot_hapc_trend <- function(df, x_label, group_label) {
   }
 
   p <- ggplot(df, aes(x = x_val, y = prob, group = group, color = group)) +
-    # 绘制置信区间 (虚线或半透明带)
-    geom_line(aes(y = lower), linetype = "dashed", alpha = 0.5) +
-    geom_line(aes(y = upper), linetype = "dashed", alpha = 0.5) +
+    # 绘制置信区间 (细密虚线，半透明)
+    geom_line(
+      aes(y = lower),
+      linetype = "dotted",
+      alpha = 0.5,
+      linewidth = 0.6
+    ) +
+    geom_line(
+      aes(y = upper),
+      linetype = "dotted",
+      alpha = 0.5,
+      linewidth = 0.6
+    ) +
 
     # 绘制主线
     geom_line(linewidth = 1) +
-    geom_point(size = 2, fill = "white", shape = 21) +
+    geom_point(size = 2, fill = "white", shape = 21)
 
-    # 配色
+  # 添加均值线 (如果数据中有 mean_prob)
+  if ("mean_prob" %in% names(df)) {
+    mean_val <- df$mean_prob[1]
+    p <- p +
+      geom_hline(
+        yintercept = mean_val,
+        linetype = "dashed",
+        color = "#888888",
+        linewidth = 0.6,
+        alpha = 0.5
+      ) +
+      annotate(
+        "text",
+        x = max(df$x_val, na.rm = TRUE),
+        y = mean_val,
+        label = paste0("Mean = ", round(mean_val, 3)),
+        hjust = 1.1,
+        vjust = -0.5,
+        size = 3.5,
+        color = "#666666",
+        alpha = 0.7
+      )
+  }
+
+  # 配色
+  p <- p +
     scale_color_manual(values = color_map) +
 
     # 标签

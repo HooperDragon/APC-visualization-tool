@@ -1,7 +1,4 @@
-# R/config.R
-# 全局配置：默认参数和共享 CSS 样式
-
-# 默认参数
+#### defaults ####
 DEFAULTS <- list(
   period_start = 2000,
   period_end = 2025,
@@ -11,9 +8,9 @@ DEFAULTS <- list(
   intervals = 5
 )
 
-# 全局 CSS 样式（卡片、按钮等）
+#### CSS ####
 APP_CSS <- "
-/* 卡片样式 */
+/* card */
 .card-style {
   background-color: #ffffff;
   border: 2px solid #333;
@@ -24,7 +21,7 @@ APP_CSS <- "
   height: 100%;
 }
 
-/* 运行按钮样式 */
+/* run button */
 #run_btn {
   width: 100%;
   font-size: 18px;
@@ -40,7 +37,7 @@ h3 {
   margin-bottom: 20px;
 }
 
-/* 弹窗按钮样式：红色确认，蓝色取消 */
+/* pop-up window */
 #confirm_age { background-color: #d9534f; color: white; }
 #cancel_age { background-color: #5bc0de; color: white; }
 "

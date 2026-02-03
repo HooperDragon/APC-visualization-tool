@@ -1,60 +1,56 @@
-# environment
+#### packages ####
 library(glmmTMB)
 library(emmeans)
 library(bruceR)
 library(sjPlot)
 
-# ==============================================================================
-# 1. 数据预处理 (Dynamic Data Preparation)
-# 根据用户的 intervals 动态划分队列，根据上传的数据中心化年龄
-# ==============================================================================
+#### data pre-process ####
 prepare_hapc_data <- function(df, params, covariates) {
-  # 提取用户设定的参数
+  ## get parameter inputs
   intv <- params$intervals
 
-  # 动态确定年龄基准值 (Centering base)
-  # 取用户数据中的最小年龄
+  ## get min age for age centering
   min_age <- min(df$Age, na.rm = TRUE)
 
+  ## centering and factorizing
   data_model <- df %>%
     mutate(
-      # --- A. 计算队列并按用户输入的 Interval 分组 ---
-      cohort = Period - Age,
+      cohort_group = Cohort_Start,
 
-      # 动态计算 Cohort Group：(当前队列 / 间隔) 向下取整 * 间隔
-      # 例如：1943年，间隔5年 -> floor(1943/5)*5 = 1940
-      cohort_group = floor(cohort / intv) * intv,
-
-      # --- B. 年龄中心化 (Age Centering) ---
-      # 减去最小年龄并除以 10 (以 10 年为单位)
+      # age centering（！！这里后续要改一下，10还是2*Interval，以及报错）
       age_c = (Age - min_age) / 10,
       age_c2 = age_c^2,
 
-      # --- C. 核心变量因子化 ---
+      # factorize period and cohort variables
       period_factor = as.factor(Period),
       cohort_group_factor = as.factor(cohort_group)
+    ) %>%
+
+    # drop internal grouping assistant columns to keep model data lean
+    select(
+      -any_of(c(
+        "Age_Label",
+        "Age_Start",
+        "Cohort_Raw",
+        "Cohort_Start",
+        "Cohort_Label"
+      ))
     )
 
-  # --- D. 动态处理协变量 (因子化) ---
-  # 用户选择的协变量通常是分类变量（如 Sex, Urban_Rural）
-  # 我们需要确保它们在建模前被转为因子
+  # factorize covariates
   for (cov in covariates) {
     data_model[[cov]] <- as.factor(data_model[[cov]])
   }
 
-  # 记录一下最小年龄，方便后面画图还原
+  # keep useful parameters as attributes for later use
   attr(data_model, "min_age") <- min_age
+  attr(data_model, "intv") <- intv
 
   return(data_model)
 }
 
-
-# ==============================================================================
-# 2. 运行动态 HAPC 模型 (Dynamic Formula - User Defined)
-# ==============================================================================
-# R/hapc_model.R 中的 run_dynamic_hapc 函数
-
-run_dynamic_hapc <- function(data_model, config) {
+#### run hapc model ####
+build_hapc_formula <- function(config) {
   fixed_part <- config$fixed_formula
   if (is.null(fixed_part) || !nzchar(trimws(fixed_part))) {
     fixed_part <- "age_c + age_c2"
@@ -81,7 +77,6 @@ run_dynamic_hapc <- function(data_model, config) {
     re_cohort <- paste0("(1 + ", slope_terms, " | cohort_group_factor)")
   }
 
-  # 组装最终公式
   final_formula_str <- paste(
     "Disease ~",
     fixed_part,
@@ -91,19 +86,26 @@ run_dynamic_hapc <- function(data_model, config) {
     re_cohort
   )
 
-  message("Running HAPC with formula: ", final_formula_str)
+  as.formula(final_formula_str)
+}
 
-  # 5. 运行模型
+#### this model cited from Yang Y, Land KC. Age-Period-Cohort Analysis: New Models, Methods, and Empirical Applications. Chapman and Hall/CRC; 2013.
+run_dynamic_hapc <- function(data_model, config) {
+  formula_obj <- build_hapc_formula(config)
+
+  message("Running HAPC with formula: ", deparse(formula_obj))
+
+  ## run model
   model <- tryCatch(
     {
       glmmTMB(
-        formula = as.formula(final_formula_str),
+        formula = formula_obj,
         data = data_model,
         family = binomial(link = "logit")
       )
     },
     error = function(e) {
-      return(NULL) # 如果直接崩了，返回 NULL
+      return(NULL)
     }
   )
 
@@ -111,10 +113,7 @@ run_dynamic_hapc <- function(data_model, config) {
     return(NULL)
   }
 
-  # =========================================================
-  # 【新增】检测收敛性 (Check Convergence)
-  # =========================================================
-  # glmmTMB 的收敛信息在 sdr/fit 等对象里；这里做一个尽量稳健的软判定
+  ## check convergence
   conv_warn <- FALSE
   diag_obj <- tryCatch(glmmTMB::diagnose(model), error = function(e) NULL)
   if (!is.null(diag_obj)) {
@@ -134,14 +133,9 @@ run_dynamic_hapc <- function(data_model, config) {
   return(model)
 }
 
-
-# ==============================================================================
-# 3. 提取结果：固定效应 (使用 bruceR)
-# 返回的是可以直接在 Shiny 的 HTML() 中渲染的代码
-# ==============================================================================
-get_fixed_effects_bruceR <- function(model) {
-  # 统一使用 sjPlot::tab_model 输出 HTML
-
+#### model results extraction ####
+## get fixed effects
+get_fixed_effects <- function(model) {
   tab <- sjPlot::tab_model(
     model,
     show.se = TRUE,
@@ -153,54 +147,58 @@ get_fixed_effects_bruceR <- function(model) {
   return(as.character(tab))
 }
 
+## get random effects
+get_random_effects <- function(model) {
+  rr_full <- ranef(model, condVar = TRUE)
+  rr_full$cond
+}
 
-# ==============================================================================
-# 5. 通用趋势提取函数 (Get Trend Data)
-# 用于 Output Module 3
-# ==============================================================================
+## get model trend data for plotting
 get_model_trend_data <- function(
   model,
   x_axis = "age",
   group_by = "null",
   data_model
 ) {
-  # 1. 提取基础信息
+  # get average intercept from fixed effects
   avg_intercept <- fixef(model)$cond["(Intercept)"]
 
-  # 获取 interval 参数用于生成 cohort 标签
-  intv <- 5 # 默认值
-  if ("cohort_group" %in% names(data_model)) {
-    cohort_vals <- sort(unique(data_model$cohort_group))
-    if (length(cohort_vals) > 1) {
-      intv <- cohort_vals[2] - cohort_vals[1]
+  # get cohort interval: prefer user-specified attribute on data_model
+  intv <- attr(data_model, "intv")
+  if (is.null(intv)) {
+    intv <- 5 # defaults
+    if ("cohort_group" %in% names(data_model)) {
+      cohort_vals <- sort(unique(data_model$cohort_group))
+      if (length(cohort_vals) > 1) {
+        intv <- cohort_vals[2] - cohort_vals[1]
+      }
     }
   }
 
-  # glmmTMB 的 ranef 结构：ranef(model, condVar=TRUE) 返回的是一个列表
-  # postVar 存储在每个分组的 attr(..., "postVar") 中
-  # 注意：glmmTMB 与 lme4 不同，需要直接从 ranef 对象获取
-  rr_full <- ranef(model, condVar = TRUE)
-  rr <- rr_full$cond # 提取条件随机效应部分
+  # get random effects (and conditional variances if available)
+  rr_full <- tryCatch(ranef(model, condVar = TRUE), error = function(e) NULL)
+  if (is.null(rr_full)) {
+    return(NULL)
+  }
+  rr <- rr_full$cond
 
   res_df <- NULL
+  note <- NULL
 
-  # === 情况 A: X 轴是 Age (固定效应) ===
+  # when: age as x axis
   if (x_axis == "age") {
-    # 构造年龄网格
     min_age <- attr(data_model, "min_age")
     max_c <- max(data_model$age_c, na.rm = TRUE)
 
-    # 用 for 循环逐点调用 emmeans，避免笛卡尔积导致参考网格爆炸
+    # use a 'for' loop to get emmeans at each age_c point
     res_list <- list()
 
-    # 如果需要分层，构造带分组的 specs
     if (group_by != "null") {
       specs <- as.formula(paste("~ age_c + age_c2 |", group_by))
     } else {
       specs <- ~ age_c + age_c2
     }
 
-    # 遍历 age_c 从 0 到 max_c，步长 1（即每 10 岁一个点）
     for (ac in seq(0, floor(max_c * 2), by = 1)) {
       emm <- emmeans(
         model,
@@ -213,20 +211,22 @@ get_model_trend_data <- function(
 
     res_df <- bind_rows(res_list) %>%
       rename(prob = prob, lower = asymp.LCL, upper = asymp.UCL) %>%
-      mutate(x_val = age_c * 10 + min_age) # 还原真实年龄
+      mutate(x_val = age_c * 10 + min_age)
 
-    # 统一分组列名
+    # add overall row
     if (group_by != "null") {
       res_df$group <- res_df[[group_by]]
     } else {
       res_df$group <- "Overall"
     }
 
-    # === 情况 B: X 轴是 Period 或 Cohort (随机效应) ===
+    # add mean line (overall mean prob)
+    mean_prob <- mean(res_df$prob, na.rm = TRUE)
+    res_df <- res_df %>% mutate(mean_prob = mean_prob)
+
+    # when: period or cohort as x axis
   } else {
-    # 确定目标随机效应名称（兼容不同命名方式）
     re_name <- if (x_axis == "period") {
-      # 尝试两种可能的命名
       if ("period_factor" %in% names(rr)) "period_factor" else "period"
     } else {
       if ("cohort_group_factor" %in% names(rr)) {
@@ -236,27 +236,21 @@ get_model_trend_data <- function(
       }
     }
 
-    # 提取该组的随机效应数据框
+    # extract the relevant random effects data frame
     re_df <- rr[[re_name]]
 
     if (is.null(re_df)) {
-      # 如果找不到对应的随机效应，返回 NULL
       return(NULL)
     }
 
-    # 提取行名作为 X 轴的值
     x_values <- as.numeric(rownames(re_df))
 
-    # glmmTMB 获取随机效应标准误：从 model$sdr$diag.cov.random
-    # 需要确定当前随机效应在 sdr$par.random 中的位置
+    # glmmTMB: get random effects standard deviations
     sdr <- model$sdr
 
-    # 获取随机效应的标准误
     if (!is.null(sdr) && !is.null(sdr$diag.cov.random)) {
       all_se <- sqrt(sdr$diag.cov.random)
 
-      # 确定当前分组的随机效应在总随机效应中的位置
-      # glmmTMB 的随机效应按照 ranef 的顺序排列
       re_names <- names(rr)
       start_idx <- 1
       for (nm in re_names) {
@@ -268,18 +262,38 @@ get_model_trend_data <- function(
       end_idx <- start_idx + nrow(re_df) - 1
 
       u_se <- all_se[start_idx:end_idx]
+      if (length(u_se) != nrow(re_df)) {
+        u_se <- rep(0, nrow(re_df))
+      }
     } else {
-      # 无法获取标准误，设为 0
+      # set as 0 if not available
       u_se <- rep(0, nrow(re_df))
     }
 
-    # --- B1. 总体趋势 (Null Stratification) ---
-    if (group_by == "null") {
-      # 提取截距的随机效应 (Intercept)
-      u_est <- re_df$`(Intercept)`
+    # extract random intercepts (handle renamed column from data.frame)
+    intercept_col <- if ("(Intercept)" %in% colnames(re_df)) {
+      "(Intercept)"
+    } else if ("X.Intercept." %in% colnames(re_df)) {
+      "X.Intercept."
+    } else {
+      NULL
+    }
+    u_intercept <- if (!is.null(intercept_col)) {
+      re_df[[intercept_col]]
+    } else {
+      numeric(0)
+    }
+    if (length(u_intercept) != length(x_values)) {
+      u_intercept <- rep(0, length(x_values))
+    }
+    if (length(u_se) != length(x_values)) {
+      u_se <- rep(0, length(x_values))
+    }
 
-      # 计算概率
-      est_total <- avg_intercept + u_est
+    # general trends
+    if (group_by == "null") {
+      # get probabilities and CIs
+      est_total <- avg_intercept + u_intercept
       res_df <- data.frame(
         x_val = x_values,
         prob = plogis(est_total),
@@ -288,146 +302,162 @@ get_model_trend_data <- function(
         group = "Overall"
       )
 
-      # --- B2. 分层趋势 (Stratified) ---
+      # stratified trends
     } else {
-      # 检查该变量是否存在于随机斜率中
-      # 列名通常是 "sex1", "urban_rural1" 等。需要模糊匹配
-      col_names <- colnames(re_df)
-      target_col <- grep(group_by, col_names, value = TRUE)
-
-      if (length(target_col) == 0) {
-        # 如果模型里没有设这个变量的随机斜率，返回空，提示用户
+      if (!group_by %in% names(data_model)) {
         return(NULL)
       }
 
-      # 提取截距 (Intercept) 和 斜率 (Slope)
-      u_intercept <- re_df$`(Intercept)`
-      u_slope <- re_df[[target_col[1]]] # 暂时只处理第一个匹配到的 level
-
-      # 注意：这里需要加上固定效应的主效应
-      # 比如 Group=1 (Reference), Total = Fixed_Int + Rand_Int
-      # Group=2, Total = Fixed_Int + Fixed_Slope + Rand_Int + Rand_Slope
-
-      # 为了简化，我们假设 group_by 是二分类变量 (0/1 或 1/2)
-      # 这是一个简化的可视化逻辑，严谨计算需要对照 model matrix
-
-      # 提取该变量的固定效应系数
-      fix_slope_name <- grep(group_by, names(fixef(model)$cond), value = TRUE)
-      fix_slope <- if (length(fix_slope_name) > 0) {
-        fixef(model)$cond[fix_slope_name]
-      } else {
-        0
+      level_labels <- levels(as.factor(data_model[[group_by]]))
+      if (length(level_labels) == 0) {
+        return(NULL)
       }
 
-      # 组1 (Ref): 仅截距
-      df_ref <- data.frame(
-        x_val = x_values,
-        est = avg_intercept + u_intercept,
-        group = "Reference" # 通常是 0 或 1
-      )
+      col_names <- colnames(re_df)
+      slope_cols <- setdiff(col_names, "(Intercept)")
 
-      # 组2 (Level): 截距 + 斜率
-      df_level <- data.frame(
-        x_val = x_values,
-        est = (avg_intercept + fix_slope) + (u_intercept + u_slope),
-        group = "Level 2" # 通常是 1 或 2
-      )
+      level_keys <- make.names(level_labels)
+      slope_levels <- sub(paste0("^", group_by), "", slope_cols)
+      slope_levels <- ifelse(slope_levels == "", slope_cols, slope_levels)
+      slope_levels_keys <- make.names(slope_levels)
+      slope_cols_by_level <- setNames(slope_cols, slope_levels_keys)
 
-      # 合并计算概率
-      res_df <- rbind(df_ref, df_level) %>%
+      fixef_names <- names(fixef(model)$cond)
+
+      vc_fixed <- tryCatch(vcov(model)$cond, error = function(e) NULL)
+      re_condvar <- if (!is.null(rr_full$condVar)) {
+        rr_full$condVar[[re_name]]
+      } else {
+        NULL
+      }
+      vc_re <- tryCatch(VarCorr(model)$cond[[re_name]], error = function(e) {
+        NULL
+      })
+
+      df_list <- lapply(seq_along(level_labels), function(i) {
+        lvl <- level_labels[i]
+        lvl_key <- level_keys[i]
+
+        coef_name <- paste0(group_by, lvl_key)
+        fix_slope <- if (coef_name %in% fixef_names) {
+          fixef(model)$cond[coef_name]
+        } else {
+          0
+        }
+
+        slope_col <- slope_cols_by_level[[lvl_key]]
+        u_slope <- if (!is.null(slope_col)) re_df[[slope_col]] else 0
+
+        # fixed-effects variance (intercept + slope, with covariance)
+        fix_var <- 0
+        if (!is.null(vc_fixed)) {
+          idx_int <- match("(Intercept)", colnames(vc_fixed))
+          idx_slope <- match(coef_name, colnames(vc_fixed))
+          if (!is.na(idx_int)) {
+            fix_var <- fix_var + vc_fixed[idx_int, idx_int]
+          }
+          if (!is.na(idx_slope)) {
+            fix_var <- fix_var + vc_fixed[idx_slope, idx_slope]
+            if (!is.na(idx_int)) {
+              fix_var <- fix_var + 2 * vc_fixed[idx_int, idx_slope]
+            }
+          }
+        }
+
+        # random-effects variance (intercept + slope, with covariance)
+        rand_var <- rep(0, length(x_values))
+        idx_re_int <- match("(Intercept)", colnames(re_df))
+        idx_re_slope <- if (!is.null(slope_col)) {
+          match(slope_col, colnames(re_df))
+        } else {
+          NA_integer_
+        }
+
+        if (!is.null(re_condvar) && length(dim(re_condvar)) == 3) {
+          for (j in seq_along(x_values)) {
+            mat <- re_condvar[,, j]
+            if (!is.na(idx_re_int)) {
+              rand_var[j] <- rand_var[j] + mat[idx_re_int, idx_re_int]
+            }
+            if (!is.na(idx_re_slope)) {
+              rand_var[j] <- rand_var[j] + mat[idx_re_slope, idx_re_slope]
+              if (!is.na(idx_re_int)) {
+                rand_var[j] <- rand_var[j] + 2 * mat[idx_re_int, idx_re_slope]
+              }
+            }
+          }
+        } else if (!is.null(vc_re)) {
+          if (!is.na(idx_re_int)) {
+            rand_var <- rand_var + vc_re[idx_re_int, idx_re_int]
+          }
+          if (!is.na(idx_re_slope)) {
+            rand_var <- rand_var + vc_re[idx_re_slope, idx_re_slope]
+            if (!is.na(idx_re_int)) {
+              rand_var <- rand_var + 2 * vc_re[idx_re_int, idx_re_slope]
+            }
+          }
+        }
+
+        var_total <- fix_var + rand_var
+        var_total[is.na(var_total)] <- 0
+        se_total <- sqrt(pmax(var_total, 0))
+
+        data.frame(
+          x_val = x_values,
+          est = (avg_intercept + fix_slope) + (u_intercept + u_slope),
+          se = se_total,
+          group = lvl,
+          stringsAsFactors = FALSE
+        )
+      })
+
+      res_df <- bind_rows(df_list) %>%
         mutate(
           prob = plogis(est),
-          # 简化的 CI 计算 (略过协方差，仅作示意)
-          lower = prob,
-          upper = prob
+          lower = plogis(est - 1.96 * se),
+          upper = plogis(est + 1.96 * se)
         )
     }
 
-    # --- 为 Cohort 添加 x_label (格式: "xxxx-xxxx") ---
+    # add x axis labels for period/cohort
     if (x_axis == "cohort") {
       res_df <- res_df %>%
         mutate(x_label = paste0(x_val, "-", x_val + intv - 1))
     }
+
+    # add note if random slope variance is ~0 when grouped
+    if (group_by != "null") {
+      tol <- 1e-6
+      vc_obj <- tryCatch(VarCorr(model)$cond[[re_name]], error = function(e) {
+        NULL
+      })
+      if (!is.null(vc_obj)) {
+        slope_idx <- which(colnames(vc_obj) != "(Intercept)")
+        if (length(slope_idx) > 0) {
+          slope_vars <- diag(vc_obj)[slope_idx]
+          if (all(is.na(slope_vars) | slope_vars <= tol)) {
+            note <- paste0(
+              "Random slope for ",
+              x_axis,
+              " by ",
+              group_by,
+              " not significant (variance ~ 0)."
+            )
+          }
+        }
+      }
+    }
+  }
+
+  # add mean line (overall mean prob) if not already added
+  if (!"mean_prob" %in% names(res_df) && !is.null(res_df)) {
+    mean_prob <- mean(res_df$prob, na.rm = TRUE)
+    res_df <- res_df %>% mutate(mean_prob = mean_prob)
+  }
+
+  if (!is.null(note)) {
+    attr(res_df, "note") <- note
   }
 
   return(res_df)
-}
-
-
-# 将模型的参数整理为表格（适合导出/显示）
-# 返回一个 list 包含：fixed (data.frame), random (data.frame), bic (numeric)
-get_model_results_table <- function(model, digits = 2, z = 1.96) {
-  if (is.null(model)) {
-    return(NULL)
-  }
-
-  # 固定效应系数与协方差
-  coefs <- fixef(model)$cond
-  vc <- tryCatch(vcov(model)$cond, error = function(e) NULL)
-
-  if (is.null(vc)) {
-    se <- rep(NA_real_, length(coefs))
-  } else {
-    se <- sqrt(diag(vc))
-  }
-
-  # 计算 OR 和 CI
-  est <- as.numeric(coefs)
-  lower <- est - z * se
-  upper <- est + z * se
-
-  or <- exp(est)
-  or_l <- exp(lower)
-  or_u <- exp(upper)
-
-  fmt_num <- function(x, d) formatC(x, format = "f", digits = d)
-
-  fixed_tbl <- data.frame(
-    term = names(coefs),
-    OR = fmt_num(or, digits),
-    lower = ifelse(is.na(or_l), NA, fmt_num(or_l, digits)),
-    upper = ifelse(is.na(or_u), NA, fmt_num(or_u, digits)),
-    stringsAsFactors = FALSE
-  )
-
-  fixed_tbl <- fixed_tbl %>%
-    mutate(
-      value = ifelse(
-        is.na(lower),
-        paste0(OR),
-        paste0(OR, " (", lower, ",", upper, ")")
-      )
-    ) %>%
-    select(term, value)
-
-  # 美化 term 名称：替换 ':' -> ' × ', '_' -> ' '
-  fixed_tbl$term <- gsub(":", " × ", fixed_tbl$term)
-  fixed_tbl$term <- gsub("_", " ", fixed_tbl$term)
-
-  # 随机效应方差：基于 ranef 的 (Intercept) 方差作为方差分量估计
-  re_full <- tryCatch(ranef(model, condVar = TRUE)$cond, error = function(e) {
-    NULL
-  })
-  random_tbl <- NULL
-  if (!is.null(re_full)) {
-    re_names <- names(re_full)
-    rand_list <- list()
-    for (nm in re_names) {
-      re_df <- re_full[[nm]]
-      if ("(Intercept)" %in% colnames(re_df)) {
-        var_comp <- var(re_df$`(Intercept)`, na.rm = TRUE)
-        rand_list[[nm]] <- data.frame(
-          effect = nm,
-          variance = var_comp,
-          stringsAsFactors = FALSE
-        )
-      }
-    }
-    if (length(rand_list) > 0) random_tbl <- bind_rows(rand_list)
-  }
-
-  # BIC
-  bic_val <- tryCatch(BIC(model), error = function(e) NA_real_)
-
-  return(list(fixed = fixed_tbl, random = random_tbl, bic = bic_val))
 }

@@ -1,4 +1,4 @@
-# --- 1. 加载依赖包 ---
+#### packages ####
 library(shiny)
 library(DT)
 library(plotly)
@@ -12,12 +12,14 @@ library(tools)
 library(shinyWidgets)
 library(digest)
 
-# --- 2. 加载业务逻辑和模块 ---
+#### sources ####
 source("R/config.R")
 source("R/data_clean.R")
 source("R/plots.R")
-source("R/descriptive.R")
+source("R/descriptive_fig.R")
+source("R/descriptive_table.R")
 source("R/hapc_model.R")
+source("R/download_tables.R")
 source("R/server_logic.R")
 source("R/ui_pages.R")
 
@@ -27,12 +29,12 @@ source("modules/mod_apc_result.R")
 source("modules/mod_download.R")
 source("modules/mod_data_input.R")
 
-# --- 3. 构建 UI ---
+#### ui ####
 ui <- build_ui()
 
-# --- 4. Server 调度 ---
+#### server ####
 server <- function(input, output, session) {
-  # A. 初始化各模块
+  ## module of data input and parameter setting
   data_input <- mod_data_input_server("data_input_1", parent_session = session)
   model_results <- reactiveValues(
     model = NULL,
@@ -40,17 +42,25 @@ server <- function(input, output, session) {
     data_for_model = NULL
   )
 
-  # B. 描述性分析数据
-  analysis_ready_data <- reactive({
+  ## module of descriptive figures
+  cleaned_grouped_data <- reactive({
     req(data_input$uploaded_data())
-    get_descriptive_data(data_input$uploaded_data(), data_input$params())
+    df_filtered <- filter_data_by_params(
+      data_input$uploaded_data(),
+      data_input$params()
+    )
+    add_age_cohort_groups(df_filtered, data_input$params())
+  })
+
+  analysis_ready_data <- reactive({
+    get_descriptive_fig(cleaned_grouped_data(), data_input$params())
   })
 
   mod_descriptive_server("desc_module_1", data_r = analysis_ready_data)
 
-  # C. 运行分析（点击按钮触发）
+  ## module of model fitting and results
   observeEvent(data_input$run_btn(), {
-    # 前置检查
+    # check pre-conditions
     if (!is.null(data_input$validation_error_msg())) {
       showNotification("Please fix invalid parameters first!", type = "error")
       return()
@@ -63,19 +73,19 @@ server <- function(input, output, session) {
     showNotification(
       "Analysis started! Building HAPC model...",
       type = "message"
-    )
+    ) # 在这里加一个进度条
     updateNavbarPage(session, "main_nav", selected = "tab_analysis")
 
-    # 调用核心分析逻辑
+    # model fitting
     result <- run_analysis(
-      raw_df = data_input$uploaded_data(),
+      raw_df = cleaned_grouped_data(),
       params = data_input$params(),
       fixed_formula = data_input$fixed_formula(),
       period_slopes = data_input$period_slopes(),
       cohort_slopes = data_input$cohort_slopes()
     )
 
-    # 处理结果
+    # show notifications based on result
     if (!result$success) {
       showNotification(result$message, type = "error", duration = NULL)
       return()
@@ -92,13 +102,13 @@ server <- function(input, output, session) {
     model_results$summary_table <- result$summary_table
   })
 
-  # D. 协变量列表（供子模块使用）
+  # covariate parsing
   covariates_list <- reactive({
     req(data_input$fixed_formula())
     parse_covariates(data_input$fixed_formula())
   })
 
-  # E. 调用结果展示和下载模块
+  # HAPC results
   mod_apc_result_server(
     "apc_result_1",
     model_r = reactive(model_results$model),
@@ -113,5 +123,5 @@ server <- function(input, output, session) {
   )
 }
 
-# --- 5. 启动应用 ---
+#### run the app ####
 shinyApp(ui, server)
