@@ -23,7 +23,6 @@ source("R/download_tables.R")
 source("R/server_logic.R")
 source("R/ui_pages.R")
 
-source("modules/mod_upload.R")
 source("modules/mod_descriptive.R")
 source("modules/mod_apc_result.R")
 source("modules/mod_download.R")

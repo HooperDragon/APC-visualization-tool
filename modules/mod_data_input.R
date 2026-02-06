@@ -1,28 +1,32 @@
-# modules/mod_data_input.R
-# Data Input 页面模块（包含参数设置、模型构建器、数据上传）
-
+#### data input ui ####
 mod_data_input_ui <- function(id) {
   ns <- NS(id)
 
   tagList(
     br(),
     fluidRow(
-      # --- 左边：参数设置卡片 ---
+      ## left: parameter card
       column(
         width = 4,
         div(
           class = "card-style",
-          h3("Parameters"),
+          h3(tags$span(
+            style = "color: #337ab7; font-weight: 700;",
+            "Analysis Parameters"
+          )),
           textInput(
             ns("proj_title"),
             "Project title",
-            placeholder = "My Analysis"
+            placeholder = "My Analysis",
+            width = "100%"
           ),
           textAreaInput(
             ns("desc"),
             "Description",
             placeholder = "Analysis notes...",
-            rows = 3
+            rows = 3,
+            width = "100%",
+            resize = "none"
           ),
 
           tags$label("Period range"),
@@ -73,9 +77,9 @@ mod_data_input_ui <- function(id) {
             value = DEFAULTS$intervals
           ),
           hr(),
-          h4("Model Specification (SPSS Style)"),
+          h4("Model Specification"),
 
-          # 变量选择池
+          # variables pool
           selectInput(
             ns("model_vars"),
             "Select Variables:",
@@ -84,7 +88,7 @@ mod_data_input_ui <- function(id) {
             selectize = TRUE
           ),
 
-          # 构建按钮
+          # buttons
           div(
             style = "display: flex; gap: 5px; margin-bottom: 10px;",
             actionButton(
@@ -94,7 +98,7 @@ mod_data_input_ui <- function(id) {
             ),
             actionButton(
               ns("add_interaction"),
-              "Add Interaction (*)",
+              "Add Interaction",
               class = "btn-xs btn-warning"
             ),
             actionButton(
@@ -104,25 +108,20 @@ mod_data_input_ui <- function(id) {
             )
           ),
 
-          # 固定效应公式显示框
-          textAreaInput(
-            ns("fixed_formula"),
-            "Fixed Effects Structure:",
-            value = "age_c + age_c2",
-            rows = 3,
-            resize = "vertical"
-          ),
+          # fixed formula (tag-based)
+          tags$label("Fixed Effects Structure:"),
+          uiOutput(ns("formula_tags_display")),
 
           tags$small(
             style = "color:grey;",
-            "Tip: Select 2 or 3 vars and click 'Interaction' to add terms like 'sex:residence'."
+            "Tip: Select 2 or 3 vars and click 'Add Interaction' to add terms like 'sex:residence'."
           ),
 
           br(),
           hr(),
 
-          # 随机斜率设置
-          h5("Random Effects (Slopes)"),
+          # random formula
+          h5("Random Effects"),
           pickerInput(
             ns("period_slopes"),
             "Vars varying by Period (cov | period):",
@@ -138,23 +137,46 @@ mod_data_input_ui <- function(id) {
             options = list(`actions-box` = TRUE)
           ),
 
-          # 错误提示框
+          ## errors
           uiOutput(ns("validation_alert"))
         )
       ),
 
-      # --- 右边：数据上传与预览卡片 ---
+      ## right:data upload and preview
       column(
         width = 8,
         div(
           class = "card-style",
-          h3("Input data"),
-          mod_upload_ui(ns("upload_module")),
+          h3(tags$span(
+            style = "color: #337ab7; font-weight: 700;",
+            "Input data"
+          )),
+          fileInput(
+            ns("file_input"),
+            "Upload data file (.csv, .dta, .sav, .xlsx, .RData, .rds)",
+            multiple = FALSE,
+            width = "100%",
+            accept = c(
+              ".csv",
+              ".dta",
+              ".xlsx",
+              ".xls",
+              ".sav",
+              ".Rdata",
+              ".rds"
+            )
+          ),
+          h5("Data Preview:"),
+          DTOutput(ns("data_preview"))
+        ),
+        div(
+          style = "margin-top: 6px;",
           actionButton(
             ns("run_btn"),
             "Run Analysis",
             icon = icon("play"),
-            class = "btn-success"
+            class = "btn-success",
+            style = "padding: 10px 20px; font-size: 15px; box-shadow: 0 2px 6px rgba(0,0,0,0.2); border-radius: 5px;"
           )
         )
       )
@@ -162,13 +184,12 @@ mod_data_input_ui <- function(id) {
   )
 }
 
+#### data input server ####
 mod_data_input_server <- function(id, parent_session) {
   moduleServer(id, function(input, output, session) {
     ns <- session$ns
 
-    # =========================================================
-    # 1. 基础验证与警告
-    # =========================================================
+    ## parameters
     validation_error_msg <- reactive({
       req(
         input$period_start,
@@ -209,7 +230,7 @@ mod_data_input_server <- function(id, parent_session) {
       )
     })
 
-    # 年龄 > 105 时的软性警告弹窗
+    # error when age>105
     observeEvent(input$age_end, {
       req(input$age_end)
       if (!is.null(validation_error_msg())) {
@@ -241,12 +262,93 @@ mod_data_input_server <- function(id, parent_session) {
       removeModal()
     })
 
-    # =========================================================
-    # 2. 数据上传模块
-    # =========================================================
-    uploaded_data <- mod_upload_server("upload_module")
+    ## data upload (inline, merged from mod_upload)
+    raw_data <- reactive({
+      req(input$file_input)
+      ext <- tools::file_ext(input$file_input$name)
+      read_and_validate_data(input$file_input$datapath, tolower(ext))
+    })
 
-    # 监听数据上传，更新模型构建器变量选择列表
+    output$data_preview <- renderDT({
+      df <- raw_data()
+      if (is.null(df)) {
+        return(NULL)
+      }
+      err <- attr(df, "error_msg")
+      validate(need(is.null(err), err))
+      datatable(
+        df,
+        options = list(
+          scrollX = TRUE,
+          scrollY = 300,
+          scroller = TRUE,
+          dom = "t"
+        )
+      )
+    })
+
+    uploaded_data <- reactive({
+      df <- raw_data()
+      if (!is.null(df) && is.null(attr(df, "error_msg"))) df else NULL
+    })
+
+    ## formula terms management (tag-based)
+    formula_terms <- reactiveVal(c("age_c", "age_c2"))
+
+    # render formula tags UI
+    output$formula_tags_display <- renderUI({
+      terms <- formula_terms()
+      if (length(terms) == 0) {
+        return(div(
+          class = "formula-tags-container",
+          tags$span(style = "color: #999;", "No terms added")
+        ))
+      }
+
+      tag_elements <- list()
+      for (i in seq_along(terms)) {
+        if (i > 1) {
+          tag_elements <- c(
+            tag_elements,
+            list(
+              tags$span(class = "formula-tag-plus", "+")
+            )
+          )
+        }
+        btn_id <- ns(paste0("remove_term_", i))
+        tag_elements <- c(
+          tag_elements,
+          list(
+            tags$span(
+              class = "formula-tag",
+              terms[i],
+              tags$span(
+                class = "tag-remove",
+                onclick = sprintf(
+                  "Shiny.setInputValue('%s', %d, {priority: 'event'})",
+                  ns("remove_term"),
+                  i
+                ),
+                HTML("&times;")
+              )
+            )
+          )
+        )
+      }
+
+      do.call(div, c(list(class = "formula-tags-container"), tag_elements))
+    })
+
+    # handle tag removal
+    observeEvent(input$remove_term, {
+      idx <- input$remove_term
+      current <- formula_terms()
+      if (idx >= 1 && idx <= length(current)) {
+        formula_terms(current[-idx])
+      }
+    })
+
+    # listen to uploaded data to update variable choices
     observeEvent(uploaded_data(), {
       df <- uploaded_data()
       req(df)
@@ -272,33 +374,28 @@ mod_data_input_server <- function(id, parent_session) {
         selected = character(0)
       )
 
+      # initialize formula terms: age_c + age_c2 + all other covariates
       covs_for_default <- setdiff(choices_vars, "age_c")
-      default_fixed <- "age_c + age_c2"
+      default_terms <- c("age_c", "age_c2")
       if (length(covs_for_default) > 0) {
-        default_fixed <- paste(
-          default_fixed,
-          "+",
-          paste(covs_for_default, collapse = " + ")
-        )
+        default_terms <- c(default_terms, covs_for_default)
       }
-      updateTextAreaInput(session, "fixed_formula", value = default_fixed)
+      formula_terms(default_terms)
     })
 
-    # =========================================================
-    # 3. 模型构建器逻辑
-    # =========================================================
+    ## formula construction
     observeEvent(input$add_main_effect, {
       req(input$model_vars)
-      current <- input$fixed_formula
-      new_terms <- paste(input$model_vars, collapse = " + ")
-
-      if (current == "") {
-        updateTextAreaInput(session, "fixed_formula", value = new_terms)
+      current <- formula_terms()
+      new_terms <- input$model_vars
+      # avoid duplicates
+      new_terms <- setdiff(new_terms, current)
+      if (length(new_terms) > 0) {
+        formula_terms(c(current, new_terms))
       } else {
-        updateTextAreaInput(
-          session,
-          "fixed_formula",
-          value = paste(current, "+", new_terms)
+        showNotification(
+          "Selected variable(s) is/are already in the formula.",
+          type = "message"
         )
       }
       updateSelectInput(session, "model_vars", selected = character(0))
@@ -314,28 +411,25 @@ mod_data_input_server <- function(id, parent_session) {
         return()
       }
 
-      current <- input$fixed_formula
+      current <- formula_terms()
       new_term <- paste(input$model_vars, collapse = ":")
-
-      if (current == "") {
-        updateTextAreaInput(session, "fixed_formula", value = new_term)
+      # avoid duplicates
+      if (!new_term %in% current) {
+        formula_terms(c(current, new_term))
       } else {
-        updateTextAreaInput(
-          session,
-          "fixed_formula",
-          value = paste(current, "+", new_term)
+        showNotification(
+          "The interaction term is already in the formula.",
+          type = "message"
         )
       }
       updateSelectInput(session, "model_vars", selected = character(0))
     })
 
     observeEvent(input$clear_formula, {
-      updateTextAreaInput(session, "fixed_formula", value = "age_c + age_c2")
+      formula_terms(c("age_c", "age_c2"))
     })
 
-    # =========================================================
-    # 4. 返回值（供 app.R 使用）
-    # =========================================================
+    ## return values
     return(list(
       uploaded_data = uploaded_data,
       validation_error_msg = validation_error_msg,
@@ -349,7 +443,7 @@ mod_data_input_server <- function(id, parent_session) {
           period_end = input$period_end
         )
       }),
-      fixed_formula = reactive(input$fixed_formula),
+      fixed_formula = reactive(paste(formula_terms(), collapse = " + ")),
       period_slopes = reactive(input$period_slopes),
       cohort_slopes = reactive(input$cohort_slopes)
     ))
