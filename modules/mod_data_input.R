@@ -166,7 +166,7 @@ mod_data_input_ui <- function(id) {
               ".rds"
             )
           ),
-          h5("Data Preview:"),
+          h5("Data Preview (first 10 rows):"),
           DTOutput(ns("data_preview"))
         ),
         div(

@@ -80,4 +80,18 @@ h3 {
   font-size: 13px;
   margin: 0 1px;
 }
+
+/* Nudge slider play button (animate) downward for sliderTextInput */
+.slider-animate-container {
+  margin-top: 10px;
+}
+
+.slider-animate-button {
+  margin-top: 4px;
+}
+
+.slider-animate {
+  position: relative;
+  top: 6px;
+}
 "

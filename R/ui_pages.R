@@ -38,8 +38,8 @@ build_ui <- function() {
       mod_data_input_ui("data_input_1")
     ),
 
-    # Page 2: Analysis Report
-    tabPanel("Analysis Report", value = "tab_analysis", page_analysis_report()),
+    # Page 2: 3D Figure
+    tabPanel("3D Figure", value = "tab_analysis", page_analysis_report()),
 
     # Page 3: Model Results
     tabPanel("Model Results", value = "tab_model", page_model_results()),

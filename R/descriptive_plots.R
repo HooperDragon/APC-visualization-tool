@@ -1,11 +1,4 @@
-library(plotly)
-library(ggplot2)
-library(tidyr)
-library(dplyr)
-library(ggsci)
-library(htmlwidgets)
-
-# --- 辅助函数：计算切面坐标 ---
+#### calculate the coordinates for the slicing plane based on the selected dimension and value ####
 get_plane_mesh <- function(df, slice_dim, slice_value) {
   x_range <- range(df$age_start)
   y_range <- range(df$period)
@@ -33,7 +26,7 @@ get_plane_mesh <- function(df, slice_dim, slice_value) {
   return(list(x = plane_x, y = plane_y, z = plane_z))
 }
 
-# --- 1. 画 3D 底图 ---
+#### 3D figure ####
 plot_3d_base <- function(df) {
   if (is.null(df) || nrow(df) == 0) {
     return(NULL)
@@ -55,7 +48,7 @@ plot_3d_base <- function(df) {
     arrange(age_start)
   npg_colors <- list(c(0, "#4DBBD5"), c(0.5, "#00A087"), c(1, "#E64B35"))
 
-  # 初始化假切面
+  ## initialize
   dummy_x <- rep(mean(x_vals), 4)
   dummy_y <- rep(mean(y_vals), 4)
   dummy_z <- rep(0, 4)
@@ -99,12 +92,14 @@ plot_3d_base <- function(df) {
         xaxis = list(
           title = "Age",
           gridcolor = "lightgrey",
-          showbackground = FALSE
+          showbackground = FALSE,
+          range = range(x_vals)
         ),
         yaxis = list(
           title = "Period",
           gridcolor = "lightgrey",
-          showbackground = FALSE
+          showbackground = FALSE,
+          range = range(y_vals)
         ),
         zaxis = list(
           title = "Rate(%)",
@@ -117,13 +112,9 @@ plot_3d_base <- function(df) {
     ) %>%
     config(displayModeBar = FALSE)
 
-  # ====================================================
-  # 【关键修复】显式注册点击事件！
-  # 这一行告诉 Plotly：如果用户点了图，请把信息发给 Shiny
-  # ====================================================
   fig <- event_register(fig, "plotly_click")
 
-  # JS 锁定视角代码
+  ## lock camera
   js_fix_camera <- "function(el, x) {
     var gd = document.getElementById(el.id);
     if(!gd) return;
@@ -153,7 +144,7 @@ plot_3d_base <- function(df) {
   return(fig)
 }
 
-# --- 2. 2D 切面图 (保持不变) ---
+#### 2D slice ####
 plot_2d_slice_generic <- function(df, slice_dim, slice_value) {
   if (is.null(df) || nrow(df) == 0) {
     return(NULL)
@@ -172,7 +163,6 @@ plot_2d_slice_generic <- function(df, slice_dim, slice_value) {
     x_col <- "period"
     title_text <- paste0("Age Group = ", slice_value)
   } else if (slice_dim == "cohort") {
-    # Cohort Slicing 可能会有多个 Period 的数据点对应同一个 Age Group
     plot_data <- df %>%
       filter(cohort_start == slice_value) %>%
       group_by(age_start, age_group) %>%
@@ -214,112 +204,3 @@ plot_2d_slice_generic <- function(df, slice_dim, slice_value) {
     )
 }
 
-# ==============================================================================
-# 4. HAPC 结果趋势图 (Line Chart for Model Results)
-# ==============================================================================
-plot_hapc_trend <- function(df, x_label, group_label) {
-  if (is.null(df)) {
-    return(NULL)
-  }
-
-  # 配色方案：Overall 用灰色，分组变量用 NPG 配色
-  # 确保分组颜色与 Overall 不重复
-  groups <- unique(df$group)
-  npg_colors <- ggsci::pal_npg()(10)
-
-  if ("Overall" %in% groups) {
-    # Overall 用深灰色，其他组用 NPG 配色
-    other_groups <- setdiff(groups, "Overall")
-    color_map <- c("Overall" = "#4D4D4D") # 深灰色
-    if (length(other_groups) > 0) {
-      color_map <- c(
-        color_map,
-        setNames(npg_colors[1:length(other_groups)], other_groups)
-      )
-    }
-  } else {
-    # 没有 Overall，直接用 NPG 配色
-    color_map <- setNames(npg_colors[1:length(groups)], groups)
-  }
-
-  p <- ggplot(df, aes(x = x_val, y = prob, group = group, color = group)) +
-    # 绘制置信区间 (细密虚线，半透明)
-    geom_line(
-      aes(y = lower),
-      linetype = "dotted",
-      alpha = 0.5,
-      linewidth = 0.6
-    ) +
-    geom_line(
-      aes(y = upper),
-      linetype = "dotted",
-      alpha = 0.5,
-      linewidth = 0.6
-    ) +
-
-    # 绘制主线
-    geom_line(linewidth = 1) +
-    geom_point(size = 2, fill = "white", shape = 21)
-
-  # 添加均值线 (如果数据中有 mean_prob)
-  if ("mean_prob" %in% names(df)) {
-    mean_val <- df$mean_prob[1]
-    p <- p +
-      geom_hline(
-        yintercept = mean_val,
-        linetype = "dashed",
-        color = "#888888",
-        linewidth = 0.6,
-        alpha = 0.5
-      ) +
-      annotate(
-        "text",
-        x = max(df$x_val, na.rm = TRUE),
-        y = mean_val,
-        label = paste0("Mean = ", round(mean_val, 3)),
-        hjust = 1.1,
-        vjust = -0.5,
-        size = 3.5,
-        color = "#666666",
-        alpha = 0.7
-      )
-  }
-
-  # 配色
-  p <- p +
-    scale_color_manual(values = color_map) +
-
-    # 标签
-    labs(
-      x = x_label,
-      y = "Predicted Probability",
-      color = group_label,
-      title = paste("Trend by", x_label)
-    ) +
-
-    # 主题
-    theme_minimal() +
-    theme(
-      plot.title = element_text(hjust = 0.5, face = "bold"),
-      legend.position = "bottom",
-      axis.line = element_line(color = "black"),
-      axis.text.x = element_text(angle = 45, hjust = 1)
-    )
-
-  # --- Cohort 特殊处理：每个点都有轴标签 (xxxx-xxxx年) ---
-  if ("x_label" %in% names(df)) {
-    # 获取唯一的 x_val 和对应的 x_label
-    label_df <- df %>%
-      select(x_val, x_label) %>%
-      distinct() %>%
-      arrange(x_val)
-
-    p <- p +
-      scale_x_continuous(
-        breaks = label_df$x_val,
-        labels = label_df$x_label
-      )
-  }
-
-  return(p)
-}

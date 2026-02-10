@@ -1,14 +1,12 @@
-#ui
+#### ui ####
 mod_descriptive_ui <- function(id) {
   ns <- NS(id)
   tagList(
     fluidRow(
-      # =========================================================
-      # 左侧区域 (占 7/12)：控制 + 3D图 + 滑块
-      # =========================================================
+      ## left column: 3D figure and controls
       column(
         7,
-        # 1. 维度选择 (Radio Buttons)
+        # ratio buttons
         div(
           style = "margin-bottom: 15px;",
           tags$strong(
@@ -27,27 +25,23 @@ mod_descriptive_ui <- function(id) {
           )
         ),
 
-        # 2. 3D 图容器 (带灰色边框)
+        # 3D figure
         div(
           style = "border: 2px solid #e0e0e0; border-radius: 8px; padding: 5px; background: white; box-shadow: 2px 2px 5px rgba(0,0,0,0.05);",
 
-          # 稍微调低高度，确保滑块能同屏显示
           plotlyOutput(ns("plot_3d"), height = "550px")
         ),
 
-        # 3. 滑块 (紧贴 3D 图下方)
+        # sliding block
         wellPanel(
           style = "margin-top: 15px; padding: 15px 20px; background-color: #f8f9fa; border: 1px solid #ddd;",
           uiOutput(ns("slider_ui"))
         )
       ),
 
-      # =========================================================
-      # 右侧区域 (占 5/12)：2D 切面图
-      # =========================================================
+      ## righ column: 2D slice view
       column(
         5,
-        # 使用 card 样式包裹，与左侧呼应
         div(
           style = "margin-top: 45px; height: 100%; padding-left: 10px;",
 
@@ -56,14 +50,12 @@ mod_descriptive_ui <- function(id) {
             style = "text-align: center; margin-bottom: 25px; color: #333;"
           ),
 
-          # 2D 图高度设为 500px，足够大且清晰
           plotOutput(ns("plot_2d"), height = "500px"),
 
-          # 底部说明
           div(
             style = "margin-top: 20px; color: #777; font-size: 0.9em; text-align: center; font-style: italic;",
             icon("info-circle"),
-            " Drag the slider on the left or click the 3D map to update."
+            " Drag the slider on the left or click the 3D figure to update."
           )
         )
       )
@@ -71,15 +63,36 @@ mod_descriptive_ui <- function(id) {
   )
 }
 
-#server
+#### server ####
 mod_descriptive_server <- function(id, data_r) {
   moduleServer(id, function(input, output, session) {
     ns <- session$ns
 
-    # 用于追踪 3D 图是否已渲染
+    ## trace whether the 3D figure is rendered
     plot_rendered <- reactiveVal(FALSE)
 
-    # 1. 动态生成滑块 (UI)
+    ## step size for age/cohort slider, derived from data intervals
+    slice_step <- reactive({
+      df <- data_r()
+      req(df, input$slice_dim)
+
+      vals <- NULL
+      if (input$slice_dim == "age") {
+        vals <- sort(unique(df$age_start))
+      } else if (input$slice_dim == "cohort") {
+        vals <- sort(unique(df$cohort_start))
+      } else {
+        return(1)
+      }
+
+      if (length(vals) >= 2) {
+        vals[2] - vals[1]
+      } else {
+        1
+      }
+    })
+
+    ## dynamic sliding block
     output$slider_ui <- renderUI({
       df <- data_r()
       req(df, input$slice_dim)
@@ -97,26 +110,26 @@ mod_descriptive_server <- function(id, data_r) {
         vals <- sort(unique(df$period))
         label_txt <- span(icon("clock"), " Select Period:")
 
-        # 使用 sliderTextInput 确保只能选择存在的 Period (离散选择)
+        # ensure only existing period can be selected
         shinyWidgets::sliderTextInput(
           inputId = ns("slice_val"),
           label = label_txt,
           choices = vals,
-          selected = vals[max(1, floor(length(vals) / 2))], # 选中中间值
+          selected = vals[max(1, floor(length(vals) / 2))],
           grid = TRUE,
           width = "100%",
-          animate = animationOptions(interval = 1000, loop = FALSE) # 稍微慢一点
+          animate = animationOptions(interval = 1000, loop = FALSE)
         )
       } else {
-        # Age 和 Cohort 保持数值滑块 (通常是等间距的)
+        # age/cohort sliding block
         if (input$slice_dim == "age") {
           vals <- sort(unique(df$age_start))
           label_txt <- span(icon("user"), " Select Age Group:")
-          step_val <- vals[2] - vals[1]
+          step_val <- slice_step()
         } else if (input$slice_dim == "cohort") {
           vals <- sort(unique(df$cohort_start))
           label_txt <- span(icon("users"), " Select Cohort:")
-          step_val <- vals[2] - vals[1]
+          step_val <- slice_step()
         }
 
         sliderInput(
@@ -127,31 +140,28 @@ mod_descriptive_server <- function(id, data_r) {
           value = median(vals),
           step = step_val,
           width = "100%",
-          animate = animationOptions(interval = 500, loop = FALSE)
+          animate = animationOptions(interval = 1000, loop = FALSE)
         )
       }
     })
 
-    # 2. 渲染 3D 底图
+    ## render 3D figure
     output$plot_3d <- renderPlotly({
       df <- data_r()
       req(df)
 
-      # 生成底图
       p <- plot_3d_base(df)
 
-      # 注册点击事件
       if (!is.null(p)) {
         p <- event_register(p, "plotly_click")
       }
 
-      # 标记图已渲染
       plot_rendered(TRUE)
 
       p
     })
 
-    # 3. Proxy 更新 3D 切面
+    ## renew 3D slice
     observeEvent(input$slice_val, {
       req(input$slice_dim)
       df <- data_r()
@@ -169,20 +179,18 @@ mod_descriptive_server <- function(id, data_r) {
         )
     })
 
-    # 4. 点击 3D 图反向更新滑块 (只有图渲染后才监听)
+    ## point at 3D figure and renew block
     observe({
-      # 确保图已渲染后才尝试读取事件
       req(plot_rendered())
 
       click <- event_data("plotly_click", source = "A")
-      req(click) # 只有当点击事件真正发生时才执行
+      req(click)
 
       if (input$slice_dim == "period") {
-        # Period 使用 sliderTextInput，需要找到最近的有效值并更新
+        # Period: find nearest value and renew
         df <- data_r()
         if (!is.null(df)) {
           valid_periods <- sort(unique(df$period))
-          # 找到最接近点击值的 Period
           idx <- which.min(abs(valid_periods - click$y))
           best_val <- valid_periods[idx]
           shinyWidgets::updateSliderTextInput(
@@ -192,12 +200,13 @@ mod_descriptive_server <- function(id, data_r) {
           )
         }
       } else {
-        # Age 和 Cohort 使用普通 Update
+        # Age and cohort: just normally renew
         new_val <- NULL
+        step_val <- slice_step()
         if (input$slice_dim == "age") {
-          new_val <- round(click$x / 5) * 5
+          new_val <- round(click$x / step_val) * step_val
         } else if (input$slice_dim == "cohort") {
-          new_val <- round((click$y - click$x) / 5) * 5
+          new_val <- round((click$y - click$x) / step_val) * step_val
         }
 
         if (!is.null(new_val)) {
@@ -206,7 +215,7 @@ mod_descriptive_server <- function(id, data_r) {
       }
     })
 
-    # 5. 更新 2D 图
+    ## renew 2D slice
     output$plot_2d <- renderPlot({
       df <- data_r()
       req(input$slice_dim, input$slice_val)
