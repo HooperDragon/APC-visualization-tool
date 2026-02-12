@@ -1,15 +1,15 @@
-# modules/mod_apc_result.R
+#### ui ####
 mod_apc_result_ui <- function(id) {
   ns <- NS(id)
   tagList(
     fluidRow(
-      # --- 左侧控制面板 ---
+      ## left colomun: settings
       column(
         3,
         wellPanel(
           h4("Visual Settings"),
 
-          # 1. 选择 X 轴 (维度)
+          # x axis
           radioButtons(
             ns("x_axis"),
             "X Axis Dimension:",
@@ -17,7 +17,7 @@ mod_apc_result_ui <- function(id) {
           ),
           hr(),
 
-          # 2. 选择分层变量 (Stratified by)
+          # stratified by
           pickerInput(
             ns("stratify_by"),
             "Stratified by:",
@@ -27,7 +27,7 @@ mod_apc_result_ui <- function(id) {
         )
       ),
 
-      # --- 右侧绘图区域 ---
+      ## right column: plots
       column(
         9,
         div(
@@ -40,35 +40,40 @@ mod_apc_result_ui <- function(id) {
   )
 }
 
-mod_apc_result_server <- function(id, model_r, data_r, covariates_r) {
+#### server ####
+mod_apc_result_server <- function(
+  id,
+  model_r,
+  data_r,
+  covariates_r,
+  period_slopes_r,
+  cohort_slopes_r
+) {
   moduleServer(id, function(input, output, session) {
     ns <- session$ns
 
-    # =========================================================
-    # 缓存机制：避免每次切换都重新计算
-    # =========================================================
+    ## cache！！需要重新修改，没有在好好运行吧
     cache <- reactiveValues(
       age = NULL,
       period = NULL,
       cohort = NULL,
-      model_hash = NULL # 用于检测模型是否更新
+      model_hash = NULL # whether model is refreshed
     )
 
-    # 当模型更新时，预先计算所有趋势数据
+    ## when refreshed, renew data
     observeEvent(model_r(), {
       req(model_r(), data_r())
 
       model <- model_r()
       data_model <- data_r()
 
-      # 生成模型 hash（简单用时间戳，确保每次运行新模型都会更新）
+      # generate hash for current model fit
       new_hash <- digest::digest(model$fit)
 
       if (is.null(cache$model_hash) || cache$model_hash != new_hash) {
         cache$model_hash <- new_hash
 
-        # 异步预计算三种趋势（Overall 版本）
-        # Age 最慢，优先计算
+        # calculate three trends data
         withProgress(message = "Computing trends...", value = 0, {
           incProgress(0.1, detail = "Age effect...")
           cache$age <- tryCatch(
@@ -91,13 +96,28 @@ mod_apc_result_server <- function(id, model_r, data_r, covariates_r) {
       }
     })
 
-    # 1. 动态更新分层变量的选项
-    observeEvent(covariates_r(), {
-      req(covariates_r())
-      # 选项包括 "null" 和用户实际投入模型的协变量
-      opts <- c("Null (Overall)" = "null", covariates_r())
-      updatePickerInput(session, "stratify_by", choices = opts)
-    })
+    # 1. 动态更新分层变量的选项（根据 x 轴维度）
+    observeEvent(
+      list(input$x_axis, covariates_r(), period_slopes_r(), cohort_slopes_r()),
+      {
+        x_axis <- input$x_axis
+        base_opts <- c("Null (Overall)" = "null")
+
+        if (x_axis == "age") {
+          covs <- covariates_r()
+          opts <- c(base_opts, covs)
+        } else if (x_axis == "period") {
+          slopes <- period_slopes_r()
+          opts <- c(base_opts, slopes)
+        } else {
+          slopes <- cohort_slopes_r()
+          opts <- c(base_opts, slopes)
+        }
+
+        updatePickerInput(session, "stratify_by", choices = opts)
+      },
+      ignoreInit = FALSE
+    )
 
     # 2. 获取趋势数据（优先使用缓存）
     trend_data <- reactive({
@@ -126,7 +146,7 @@ mod_apc_result_server <- function(id, model_r, data_r, covariates_r) {
       )
     })
 
-    # 3. 绘图（直接使用 trend_data）
+    ## draw plots
     output$trend_plot <- renderPlot({
       plot_data <- trend_data()
 

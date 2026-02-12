@@ -5,6 +5,16 @@ library(bruceR)
 library(sjPlot)
 
 #### data pre-process ####
+parse_covariates <- function(
+  formula_str,
+  period_slopes = NULL,
+  cohort_slopes = NULL
+) {
+  formula_vars <- unique(unlist(strsplit(formula_str, "[\\+\\*\\:]|\\s+")))
+  formula_vars <- setdiff(formula_vars, c("age_c", "age_c2", "", "1", "0"))
+  unique(c(formula_vars, period_slopes, cohort_slopes))
+}
+
 prepare_hapc_data <- function(df, params, covariates) {
   ## get parameter inputs
   intv <- params$intervals
@@ -95,13 +105,17 @@ run_dynamic_hapc <- function(data_model, config) {
 
   message("Running HAPC with formula: ", deparse(formula_obj))
 
-  ## run model
+  ## run model (use OpenMP parallel for speed)
+  n_cores <- max(1, min(parallel::detectCores() %/% 2, 8))
   model <- tryCatch(
     {
       glmmTMB(
         formula = formula_obj,
         data = data_model,
-        family = binomial(link = "logit")
+        family = binomial(link = "logit"),
+        control = glmmTMBControl(
+          parallel = list(n = n_cores, autopar = TRUE)
+        )
       )
     },
     error = function(e) {
@@ -160,8 +174,9 @@ get_model_trend_data <- function(
   group_by = "null",
   data_model
 ) {
-  # get average intercept from fixed effects
-  avg_intercept <- fixef(model)$cond["(Intercept)"]
+  # get marginal average log-odds via emmeans (averaging over all covariates)
+  avg_emm <- summary(emmeans(model, ~1, type = "link"))
+  avg_log_odds <- avg_emm$emmean
 
   # get cohort interval: prefer user-specified attribute on data_model
   intv <- attr(data_model, "intv")
@@ -190,8 +205,8 @@ get_model_trend_data <- function(
     min_age <- attr(data_model, "min_age")
     max_c <- max(data_model$age_c, na.rm = TRUE)
 
-    # use a 'for' loop to get emmeans at each age_c point
-    res_list <- list()
+    # batch emmeans call: compute all age points at once (much faster than loop)
+    age_c_vals <- seq(0, floor(max_c * 2), by = 1) / 2
 
     if (group_by != "null") {
       specs <- as.formula(paste("~ age_c + age_c2 |", group_by))
@@ -199,17 +214,17 @@ get_model_trend_data <- function(
       specs <- ~ age_c + age_c2
     }
 
-    for (ac in seq(0, floor(max_c * 2), by = 1)) {
-      emm <- emmeans(
-        model,
-        specs,
-        at = list(age_c = ac / 2, age_c2 = (ac / 2)^2),
-        type = "response"
-      )
-      res_list[[length(res_list) + 1]] <- as.data.frame(summary(emm))
-    }
+    emm <- emmeans(
+      model,
+      specs,
+      at = list(age_c = age_c_vals, age_c2 = age_c_vals^2),
+      type = "response",
+      rg.limit = 20000
+    )
 
-    res_df <- bind_rows(res_list) %>%
+    res_df <- as.data.frame(summary(emm)) %>%
+      # keep only paired rows where age_c2 == age_c^2
+      filter(abs(age_c2 - age_c^2) < 1e-10) %>%
       rename(prob = prob, lower = asymp.LCL, upper = asymp.UCL) %>%
       mutate(x_val = age_c * 10 + min_age)
 
@@ -220,9 +235,8 @@ get_model_trend_data <- function(
       res_df$group <- "Overall"
     }
 
-    # add mean line (overall mean prob)
-    mean_prob <- mean(res_df$prob, na.rm = TRUE)
-    res_df <- res_df %>% mutate(mean_prob = mean_prob)
+    # add mean line (global baseline: marginal average probability)
+    res_df <- res_df %>% mutate(mean_prob = plogis(avg_log_odds))
 
     # when: period or cohort as x axis
   } else {
@@ -245,28 +259,17 @@ get_model_trend_data <- function(
 
     x_values <- as.numeric(rownames(re_df))
 
-    # glmmTMB: get random effects standard deviations
-    sdr <- model$sdr
+    # get posterior variance (condVar) for random intercept SE
+    re_condvar_arr <- tryCatch(
+      attr(rr_full$cond[[re_name]], "condVar"),
+      error = function(e) NULL
+    )
 
-    if (!is.null(sdr) && !is.null(sdr$diag.cov.random)) {
-      all_se <- sqrt(sdr$diag.cov.random)
-
-      re_names <- names(rr)
-      start_idx <- 1
-      for (nm in re_names) {
-        if (nm == re_name) {
-          break
-        }
-        start_idx <- start_idx + nrow(rr[[nm]])
-      }
-      end_idx <- start_idx + nrow(re_df) - 1
-
-      u_se <- all_se[start_idx:end_idx]
-      if (length(u_se) != nrow(re_df)) {
-        u_se <- rep(0, nrow(re_df))
-      }
+    if (!is.null(re_condvar_arr) && length(dim(re_condvar_arr)) == 3) {
+      # condVar is a 3D array: [npar, npar, ngroups]
+      # extract intercept posterior SD: sqrt(condVar[1,1,j]) for each group j
+      u_se <- sqrt(re_condvar_arr[1, 1, ])
     } else {
-      # set as 0 if not available
       u_se <- rep(0, nrow(re_df))
     }
 
@@ -293,7 +296,7 @@ get_model_trend_data <- function(
     # general trends
     if (group_by == "null") {
       # get probabilities and CIs
-      est_total <- avg_intercept + u_intercept
+      est_total <- avg_log_odds + u_intercept
       res_df <- data.frame(
         x_val = x_values,
         prob = plogis(est_total),
@@ -404,7 +407,7 @@ get_model_trend_data <- function(
 
         data.frame(
           x_val = x_values,
-          est = (avg_intercept + fix_slope) + (u_intercept + u_slope),
+          est = (avg_log_odds + fix_slope) + (u_intercept + u_slope),
           se = se_total,
           group = lvl,
           stringsAsFactors = FALSE
@@ -449,10 +452,9 @@ get_model_trend_data <- function(
     }
   }
 
-  # add mean line (overall mean prob) if not already added
+  # add mean line (global baseline: marginal average probability)
   if (!"mean_prob" %in% names(res_df) && !is.null(res_df)) {
-    mean_prob <- mean(res_df$prob, na.rm = TRUE)
-    res_df <- res_df %>% mutate(mean_prob = mean_prob)
+    res_df <- res_df %>% mutate(mean_prob = plogis(avg_log_odds))
   }
 
   if (!is.null(note)) {

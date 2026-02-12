@@ -53,7 +53,7 @@ plot_hapc_trend <- function(df, x_label, group_label) {
         label = paste0("Mean = ", round(mean_val, 3)),
         hjust = 1.1,
         vjust = -0.5,
-        size = 3.5,
+        size = 5.5,
         color = "#666666",
         alpha = 0.7
       )
@@ -67,9 +67,13 @@ plot_hapc_trend <- function(df, x_label, group_label) {
       color = group_label,
       title = paste("Trend by", x_label)
     ) +
-    theme_minimal() +
+    theme_minimal(base_size = 22) +
     theme(
-      plot.title = element_text(hjust = 0.5, face = "bold"),
+      plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
+      axis.title = element_text(size = 15.5),
+      axis.text = element_text(size = 15.5),
+      legend.title = element_text(size = 15.5),
+      legend.text = element_text(size = 15.5),
       legend.position = "bottom",
       axis.line = element_line(color = "black"),
       axis.text.x = element_text(angle = 45, hjust = 1)

@@ -103,18 +103,37 @@ server <- function(input, output, session) {
     model_results$summary_table <- result$summary_table
   })
 
-  # covariate parsing
-  covariates_list <- reactive({
+  # covariates that interact with age_c for age stratification
+  age_stratify_covariates <- reactive({
     req(data_input$fixed_formula())
-    parse_covariates(data_input$fixed_formula())
+    formula_str <- data_input$fixed_formula()
+
+    interaction_terms <- unlist(strsplit(formula_str, "\\+"))
+    interaction_terms <- trimws(interaction_terms)
+    interaction_terms <- interaction_terms[grepl(":", interaction_terms)]
+
+    age_terms <- interaction_terms[grepl("(^|:)age_c(:|$)", interaction_terms)]
+    if (length(age_terms) == 0) {
+      return(character(0))
+    }
+
+    vars <- unique(unlist(strsplit(age_terms, ":")))
+    vars <- setdiff(vars, c("age_c", "age_c2", ""))
+    vars
   })
+
+  # slope variables for period/cohort stratification
+  period_slopes_r <- reactive(data_input$period_slopes())
+  cohort_slopes_r <- reactive(data_input$cohort_slopes())
 
   # HAPC results
   mod_apc_result_server(
     "apc_result_1",
     model_r = reactive(model_results$model),
     data_r = reactive(model_results$data_for_model),
-    covariates_r = covariates_list
+    covariates_r = age_stratify_covariates,
+    period_slopes_r = period_slopes_r,
+    cohort_slopes_r = cohort_slopes_r
   )
 
   mod_download_server(

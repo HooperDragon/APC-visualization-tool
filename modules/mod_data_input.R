@@ -114,7 +114,7 @@ mod_data_input_ui <- function(id) {
 
           tags$small(
             style = "color:grey;",
-            "Tip: Select 2 or 3 vars and click 'Add Interaction' to add terms like 'sex:residence'."
+            "Tip: Select 2 vars and click 'Add Interaction' to add terms like 'sex:residence'."
           ),
 
           br(),
@@ -188,6 +188,17 @@ mod_data_input_ui <- function(id) {
 mod_data_input_server <- function(id, parent_session) {
   moduleServer(id, function(input, output, session) {
     ns <- session$ns
+
+    # helper: canonicalize interaction term so order doesn't matter
+    canonicalize_interaction <- function(term) {
+      if (grepl(":", term)) {
+        parts <- unlist(strsplit(term, ":"))
+        parts_sorted <- sort(parts)
+        paste(parts_sorted, collapse = ":")
+      } else {
+        term
+      }
+    }
 
     ## parameters
     validation_error_msg <- reactive({
@@ -410,11 +421,22 @@ mod_data_input_server <- function(id, parent_session) {
         )
         return()
       }
+      if (length(input$model_vars) > 2) {
+        showNotification(
+          "Please select at most 2 variables for interaction.",
+          type = "warning"
+        )
+        return()
+      }
 
       current <- formula_terms()
       new_term <- paste(input$model_vars, collapse = ":")
-      # avoid duplicates
-      if (!new_term %in% current) {
+
+      current_canon <- vapply(current, canonicalize_interaction, FUN.VALUE = "")
+      new_canon <- canonicalize_interaction(new_term)
+
+      # avoid duplicates irrespective of variable order (a:b == b:a)
+      if (!new_canon %in% current_canon) {
         formula_terms(c(current, new_term))
       } else {
         showNotification(
