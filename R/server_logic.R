@@ -58,7 +58,17 @@ run_analysis <- function(
   msg <- if (converged) {
     "Model converged successfully!"
   } else {
-    "Warning: Model failed to converge. Please simplify interactions."
+    fit_warns <- attr(model, "fit_warnings")
+    if (any(grepl("singular", fit_warns, ignore.case = TRUE))) {
+      paste0(
+        "Warning: Singular fit detected. ",
+        "The random slope variance is near zero or the correlation is at the boundary. ",
+        "Consider removing random slopes (e.g. period/cohort slopes) ",
+        "or using a simpler random-effects structure."
+      )
+    } else {
+      "Warning: Model convergence problem. Results may be unreliable; try simplifying interactions or random slopes."
+    }
   }
 
   ## summary table

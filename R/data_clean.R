@@ -126,13 +126,28 @@ add_age_cohort_groups <- function(df, params) {
   age_s <- params$age_start
   age_e <- params$age_end
 
+  ## last full-interval group start: largest s where s + intv - 1 <= age_e
+  age_max_start <- max(
+    floor((age_e - (intv - 1) - age_s) / intv) * intv + age_s,
+    age_s
+  )
+
   df <- df %>%
     mutate(
-      Age_Start = floor((Age - age_s) / intv) * intv + age_s,
+      ## cap Age_Start so incomplete tail merges into the last full group
+      Age_Start = pmin(
+        floor((Age - age_s) / intv) * intv + age_s,
+        age_max_start
+      ),
       Age_Label = if (intv == 1) {
         as.character(Age_Start)
       } else {
-        paste0(Age_Start, "-", pmin(Age_Start + intv - 1, age_e))
+        ## last group is open-ended (e.g. "100-"); others are closed
+        ifelse(
+          Age_Start == age_max_start,
+          paste0(Age_Start, "-"),
+          paste0(Age_Start, "-", Age_Start + intv - 1)
+        )
       },
 
       Cohort_Raw = Period - Age_Start,

@@ -107,8 +107,11 @@ run_dynamic_hapc <- function(data_model, config) {
 
   ## run model (use OpenMP parallel for speed)
   n_cores <- max(1, min(parallel::detectCores() %/% 2, 8))
+
+  # capture warnings during fitting to detect singular convergence
+  fit_warnings <- character(0)
   model <- tryCatch(
-    {
+    withCallingHandlers(
       glmmTMB(
         formula = formula_obj,
         data = data_model,
@@ -116,8 +119,12 @@ run_dynamic_hapc <- function(data_model, config) {
         control = glmmTMBControl(
           parallel = list(n = n_cores, autopar = TRUE)
         )
-      )
-    },
+      ),
+      warning = function(w) {
+        fit_warnings <<- c(fit_warnings, conditionMessage(w))
+        invokeRestart("muffleWarning")
+      }
+    ),
     error = function(e) {
       return(NULL)
     }
@@ -127,22 +134,32 @@ run_dynamic_hapc <- function(data_model, config) {
     return(NULL)
   }
 
-  ## check convergence
-  conv_warn <- FALSE
-  diag_obj <- tryCatch(glmmTMB::diagnose(model), error = function(e) NULL)
-  if (!is.null(diag_obj)) {
-    txt <- paste(capture.output(diag_obj), collapse = "\n")
-    if (
-      grepl(
-        "non-positive-definite|cannot|failed|converge",
-        txt,
-        ignore.case = TRUE
-      )
-    ) {
-      conv_warn <- TRUE
+  ## check convergence: look for singular/convergence warnings
+  conv_warn <- any(grepl(
+    "singular|convergence|non-positive-definite",
+    fit_warnings,
+    ignore.case = TRUE
+  ))
+
+  ## also check for boundary random-effect correlations (|corr| ≈ 1)
+  if (!conv_warn) {
+    vc_cond <- tryCatch(VarCorr(model)$cond, error = function(e) NULL)
+    if (!is.null(vc_cond)) {
+      for (grp in vc_cond) {
+        corr_mat <- attr(grp, "correlation")
+        if (!is.null(corr_mat) && nrow(corr_mat) > 1) {
+          off_diag <- corr_mat[upper.tri(corr_mat)]
+          if (any(abs(off_diag) > 0.999, na.rm = TRUE)) {
+            conv_warn <- TRUE
+            break
+          }
+        }
+      }
     }
   }
+
   attr(model, "convergence_warning") <- conv_warn
+  attr(model, "fit_warnings") <- fit_warnings
 
   return(model)
 }
@@ -328,11 +345,8 @@ get_model_trend_data <- function(
       fixef_names <- names(fixef(model)$cond)
 
       vc_fixed <- tryCatch(vcov(model)$cond, error = function(e) NULL)
-      re_condvar <- if (!is.null(rr_full$condVar)) {
-        rr_full$condVar[[re_name]]
-      } else {
-        NULL
-      }
+      # reuse the condVar array already extracted above
+      re_condvar <- re_condvar_arr
       vc_re <- tryCatch(VarCorr(model)$cond[[re_name]], error = function(e) {
         NULL
       })
@@ -348,7 +362,11 @@ get_model_trend_data <- function(
           0
         }
 
-        slope_col <- slope_cols_by_level[[lvl_key]]
+        slope_col <- if (lvl_key %in% names(slope_cols_by_level)) {
+          slope_cols_by_level[[lvl_key]]
+        } else {
+          NULL
+        }
         u_slope <- if (!is.null(slope_col)) re_df[[slope_col]] else 0
 
         # fixed-effects variance (intercept + slope, with covariance)
@@ -377,25 +395,30 @@ get_model_trend_data <- function(
         }
 
         if (!is.null(re_condvar) && length(dim(re_condvar)) == 3) {
+          n_re_params <- dim(re_condvar)[1]
           for (j in seq_along(x_values)) {
+            if (j > dim(re_condvar)[3]) {
+              break
+            }
             mat <- re_condvar[,, j]
-            if (!is.na(idx_re_int)) {
+            if (!is.na(idx_re_int) && idx_re_int <= n_re_params) {
               rand_var[j] <- rand_var[j] + mat[idx_re_int, idx_re_int]
             }
-            if (!is.na(idx_re_slope)) {
+            if (!is.na(idx_re_slope) && idx_re_slope <= n_re_params) {
               rand_var[j] <- rand_var[j] + mat[idx_re_slope, idx_re_slope]
-              if (!is.na(idx_re_int)) {
+              if (!is.na(idx_re_int) && idx_re_int <= n_re_params) {
                 rand_var[j] <- rand_var[j] + 2 * mat[idx_re_int, idx_re_slope]
               }
             }
           }
         } else if (!is.null(vc_re)) {
-          if (!is.na(idx_re_int)) {
+          n_vc <- nrow(vc_re)
+          if (!is.na(idx_re_int) && idx_re_int <= n_vc) {
             rand_var <- rand_var + vc_re[idx_re_int, idx_re_int]
           }
-          if (!is.na(idx_re_slope)) {
+          if (!is.na(idx_re_slope) && idx_re_slope <= n_vc) {
             rand_var <- rand_var + vc_re[idx_re_slope, idx_re_slope]
-            if (!is.na(idx_re_int)) {
+            if (!is.na(idx_re_int) && idx_re_int <= n_vc) {
               rand_var <- rand_var + 2 * vc_re[idx_re_int, idx_re_slope]
             }
           }

@@ -192,15 +192,17 @@ plot_2d_slice_generic <- function(df, slice_dim, slice_value) {
   ggplot(plot_data, aes(x = .data[[x_col]], y = rate, group = 1)) +
     geom_line(color = "#E64B35", linewidth = 1.2) +
     geom_point(color = "#4DBBD5", size = 3) +
-    theme_minimal() +
+    theme_minimal(base_size = 22) +
     labs(
       title = title_text,
       y = "Rate (%)",
       x = ifelse(x_col == "period", "Period", "Age Group")
     ) +
     theme(
-      axis.text.x = element_text(angle = 45, hjust = 1),
-      plot.title = element_text(hjust = 0.5, face = "bold", size = 14)
+      plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
+      axis.title = element_text(size = 15.5),
+      axis.text = element_text(size = 15.5),
+      axis.line = element_line(color = "black"),
+      axis.text.x = element_text(angle = 45, hjust = 1)
     )
 }
-
