@@ -20,7 +20,7 @@ mod_descriptive_ui <- function(id) {
               "Period" = "period",
               "Age" = "age",
               "Cohort" = "cohort",
-              "None" = "none"
+              "Null" = "null"
             ),
             inline = TRUE
           )
@@ -97,7 +97,7 @@ mod_descriptive_server <- function(id, data_r) {
     output$slider_ui <- renderUI({
       df <- data_r()
       req(df, input$slice_dim)
-      if (input$slice_dim == "none" || !"period" %in% names(df)) {
+      if (input$slice_dim == "null" || !"period" %in% names(df)) {
         return(NULL)
       }
 
@@ -162,9 +162,9 @@ mod_descriptive_server <- function(id, data_r) {
       p
     })
 
-    ## hide mesh when slice_dim == "none"
+    ## hide mesh when slice_dim == "null"
     observeEvent(input$slice_dim, {
-      if (input$slice_dim == "none") {
+      if (input$slice_dim == "null") {
         plotlyProxy("plot_3d", session) %>%
           plotlyProxyInvoke("restyle", list(opacity = 0), list(1))
       } else {
@@ -175,7 +175,7 @@ mod_descriptive_server <- function(id, data_r) {
 
     ## renew 3D slice
     observeEvent(input$slice_val, {
-      req(input$slice_dim, input$slice_dim != "none")
+      req(input$slice_dim, input$slice_dim != "null")
       df <- data_r()
       mesh_data <- get_plane_mesh(df, input$slice_dim, input$slice_val)
 
@@ -193,7 +193,7 @@ mod_descriptive_server <- function(id, data_r) {
 
     ## point at 3D figure and renew block
     observe({
-      req(plot_rendered(), input$slice_dim != "none")
+      req(plot_rendered(), input$slice_dim != "null")
 
       click <- event_data("plotly_click", source = "A")
       req(click)
@@ -230,7 +230,7 @@ mod_descriptive_server <- function(id, data_r) {
     ## renew 2D slice
     output$plot_2d <- renderPlot({
       df <- data_r()
-      req(input$slice_dim, input$slice_dim != "none", input$slice_val)
+      req(input$slice_dim, input$slice_dim != "null", input$slice_val)
       plot_2d_slice_generic(df, input$slice_dim, input$slice_val)
     })
   })

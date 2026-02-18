@@ -18,7 +18,6 @@ source("R/config.R")
 source("R/data_clean.R")
 source("R/descriptive_plots.R")
 source("R/hapc_plots.R")
-source("R/descriptive_fig.R")
 source("R/descriptive_table.R")
 source("R/hapc_model.R")
 source("R/download_tables.R")
@@ -139,7 +138,10 @@ server <- function(input, output, session) {
   mod_download_server(
     "download_module_1",
     model_results = model_results,
-    trend_data = NULL
+    trend_data = NULL,
+    covariates_r = age_stratify_covariates,
+    period_slopes_r = period_slopes_r,
+    cohort_slopes_r = cohort_slopes_r
   )
 }
 

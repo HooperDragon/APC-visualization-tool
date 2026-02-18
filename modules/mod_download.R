@@ -1,11 +1,9 @@
-# modules/mod_download.R
-
+#### ui ####
 mod_download_ui <- function(id) {
   ns <- NS(id)
 
   tagList(
-    # 引入一些美化样式 (如果 app.R 里已经有了 card-style，这里会自动继承，无需重复定义)
-    # 这里加一点点针对下载按钮的微调
+    ## card-style
     tags$head(tags$style(HTML(
       "
       .download-btn-large { 
@@ -24,10 +22,9 @@ mod_download_ui <- function(id) {
     "
     ))),
 
+    ## layout
     fluidRow(
-      # =========================================================
-      # 左侧卡片：批量一键下载 (Batch Download)
-      # =========================================================
+      # left column: batch download
       column(
         4,
         div(
@@ -39,14 +36,12 @@ mod_download_ui <- function(id) {
           ),
           hr(),
 
-          # 1. 下载 RData (包含所有对象，适合 R 用户)
           downloadButton(
             ns("dl_rdata"),
             " Download All as .RData",
             class = "btn-primary download-btn-large"
           ),
 
-          # 2. 下载 Zip (包含所有 Excel/CSV，适合非 R 用户)
           downloadButton(
             ns("dl_zip"),
             " Download All Tables (.zip)",
@@ -61,9 +56,7 @@ mod_download_ui <- function(id) {
         )
       ),
 
-      # =========================================================
-      # 右侧卡片：单表下载 (Individual Download)
-      # =========================================================
+      # right colunm: single table download
       column(
         8,
         div(
@@ -71,7 +64,7 @@ mod_download_ui <- function(id) {
           div(
             style = "display: flex; justify-content: space-between; align-items: center;",
             h4(icon("table"), " Individual Table Export"),
-            # 在右上角放下载按钮
+
             downloadButton(
               ns("dl_single"),
               "Download Selected",
@@ -81,24 +74,24 @@ mod_download_ui <- function(id) {
           hr(),
 
           fluidRow(
-            # 选择要下载哪个表
+            # choose the table
             column(
               6,
               selectInput(
                 ns("select_table"),
                 "Select Table:",
                 choices = c(
-                  "Fixed Effects (OR & CI)" = "fixed",
-                  "Random Effects (Period)" = "re_period",
-                  "Random Effects (Cohort)" = "re_cohort",
-                  "Age Trend Data" = "age_trend",
-                  "Period Trend Data" = "period_trend",
-                  "Cohort Trend Data" = "cohort_trend"
+                  "HAPC Effect Table" = "combined",
+                  "Basic Characteristics" = "basic_characteristics",
+                  "Basic Characteristics by Period" = "basic_characteristics_by_period",
+                  "Age trend by HAPC model" = "age_trend",
+                  "Period trend by HAPC model" = "period_trend",
+                  "Cohort trend by HAPC model" = "cohort_trend"
                 ),
                 width = "100%"
               )
             ),
-            # 选择格式
+            # choose the format
             column(
               6,
               radioButtons(
@@ -110,10 +103,10 @@ mod_download_ui <- function(id) {
             )
           ),
 
-          # 表格预览区域 (让用户确认这就是他们想要的表)
+          # preview
           div(
             class = "preview-container",
-            h5("Data Preview (First 10 rows):"),
+            h5("Data Preview:"),
             DTOutput(ns("preview_table"))
           )
         )
@@ -122,325 +115,314 @@ mod_download_ui <- function(id) {
   )
 }
 
-mod_download_server <- function(id, model_results, trend_data) {
+#### helpers (module-local) ####
+
+## Columns to exclude when guessing basic-characteristic variables.
+## These are either required input columns or model-generated internal columns.
+EXCLUDE_COLS <- c(
+  "Disease",
+  "Age",
+  "Period",
+  "age_c",
+  "age_c2",
+  "period_factor",
+  "cohort_group",
+  "cohort_group_factor"
+)
+
+## Table-name -> export-filename mapping
+TABLE_FILENAMES <- c(
+  combined = "hapc_effect_table",
+  basic_characteristics = "basic_characteristics",
+  basic_characteristics_by_period = "basic_characteristics_by_period",
+  age_trend = "age_trend_by_hapc_model",
+  period_trend = "period_trend_by_hapc_model",
+  cohort_trend = "cohort_trend_by_hapc_model"
+)
+
+## Slim trend data to key columns, rounded to 4 decimals
+slim_trend <- function(df, x_axis) {
+  if (is.null(df) || "Message" %in% names(df)) {
+    return(df)
+  }
+  label_col <- switch(
+    x_axis,
+    age = {
+      df$Age <- df$x_val
+      "Age"
+    },
+    period = {
+      df$Period <- df$x_val
+      "Period"
+    },
+    {
+      df$Cohort <- if ("x_label" %in% names(df)) df$x_label else df$x_val
+      "Cohort"
+    }
+  )
+  out <- df[, c(label_col, "group", "prob", "lower", "upper"), drop = FALSE]
+  out[c("prob", "lower", "upper")] <- lapply(
+    out[c("prob", "lower", "upper")],
+    round,
+    4
+  )
+  out
+}
+
+## Prefix group values with variable name (e.g., sex1, urban_rural2)
+label_group_values <- function(df, group_var) {
+  if (is.null(df) || "Message" %in% names(df)) {
+    return(df)
+  }
+  if (is.null(group_var) || !nzchar(group_var)) {
+    return(df)
+  }
+  if (!"group" %in% names(df)) {
+    return(df)
+  }
+  df$group <- ifelse(
+    df$group == "Overall",
+    "Overall",
+    paste0(group_var, df$group)
+  )
+  df
+}
+
+## Guess which basic-characteristic variables exist in data.
+## Uses exclusion: removes known required/model-internal columns;
+## everything else is treated as a user-supplied covariate.
+guess_basic_vars <- function(df) {
+  if (is.null(df)) {
+    return(character(0))
+  }
+  setdiff(names(df), EXCLUDE_COLS)
+}
+
+## Write a data.frame to file (xlsx or csv)
+write_table <- function(df, file, fmt = "csv") {
+  df <- as.data.frame(df)
+  if (fmt == "xlsx" && requireNamespace("writexl", quietly = TRUE)) {
+    writexl::write_xlsx(df, path = file)
+  } else {
+    write.csv(df, file, row.names = FALSE, na = "")
+  }
+}
+
+#### server ####
+mod_download_server <- function(
+  id,
+  model_results,
+  trend_data = NULL,
+  covariates_r = reactive(character(0)),
+  period_slopes_r = reactive(character(0)),
+  cohort_slopes_r = reactive(character(0))
+) {
   moduleServer(id, function(input, output, session) {
     ns <- session$ns
 
-    # Helper: safe access to model and cached data
+    # ── safe accessors ──
     get_model_obj <- reactive({
-      if (
-        !is.null(model_results) &&
-          is.list(model_results) &&
-          !is.null(model_results$model)
-      ) {
-        return(model_results$model)
+      if (is.list(model_results) && !is.null(model_results$model)) {
+        model_results$model
       }
-      return(NULL)
     })
 
     get_data_model <- reactive({
-      if (
-        !is.null(model_results) &&
-          is.list(model_results) &&
-          !is.null(model_results$data_for_model)
-      ) {
-        return(model_results$data_for_model)
+      if (is.list(model_results) && !is.null(model_results$data_for_model)) {
+        model_results$data_for_model
       }
-      return(NULL)
     })
 
-    # Reactive: selected table (data.frame)
+    # ── build full trend (Overall + stratified groups) ──
+    build_full_trend <- function(model, x_axis, data_model) {
+      overall <- tryCatch(
+        slim_trend(
+          get_model_trend_data(model, x_axis, "null", data_model),
+          x_axis
+        ),
+        error = function(e) NULL
+      )
+
+      group_vars <- switch(
+        x_axis,
+        age = covariates_r(),
+        period = period_slopes_r(),
+        cohort = cohort_slopes_r(),
+        character(0)
+      ) %||%
+        character(0)
+
+      stratified <- Filter(
+        Negate(is.null),
+        lapply(group_vars, function(gv) {
+          tryCatch(
+            label_group_values(
+              slim_trend(
+                get_model_trend_data(model, x_axis, gv, data_model),
+                x_axis
+              ),
+              gv
+            ),
+            error = function(e) NULL
+          )
+        })
+      )
+
+      parts <- Filter(Negate(is.null), c(list(overall), stratified))
+      if (length(parts) == 0) NULL else do.call(rbind, parts)
+    }
+
+    # ── generate any table by name ──
+    build_table <- function(tbl_name, model, data_model) {
+      switch(
+        tbl_name,
+        combined = {
+          if (is.null(model)) {
+            return(NULL)
+          }
+          get_model_results_table(model)$combined
+        },
+        basic_characteristics = {
+          vars <- guess_basic_vars(data_model)
+          if (is.null(data_model) || length(vars) == 0) {
+            return(NULL)
+          }
+          get_basic_characteristics(data_model, vars)
+        },
+        basic_characteristics_by_period = {
+          vars <- guess_basic_vars(data_model)
+          if (is.null(data_model) || length(vars) == 0) {
+            return(NULL)
+          }
+          get_basic_characteristics_by_period(data_model, vars)
+        },
+        age_trend = build_full_trend(model, "age", data_model),
+        period_trend = build_full_trend(model, "period", data_model),
+        cohort_trend = build_full_trend(model, "cohort", data_model),
+        NULL
+      )
+    }
+
+    safe_build_table <- function(tbl_name, model, data_model) {
+      tryCatch(
+        build_table(tbl_name, model, data_model),
+        error = function(e) data.frame(Message = paste0("Error: ", e$message))
+      )
+    }
+
+    # ── collect all exportable tables ──
+    build_all_tables <- function(model, data_model) {
+      tbls <- lapply(names(TABLE_FILENAMES), function(nm) {
+        tryCatch(build_table(nm, model, data_model), error = function(e) NULL)
+      })
+      names(tbls) <- names(TABLE_FILENAMES)
+      Filter(Negate(is.null), tbls)
+    }
+
+    # ── reactive: currently selected table ──
     selected_table <- reactive({
       tbl_name <- input$select_table
-      model <- get_model_obj()
-      data_model <- get_data_model()
-
-      if (tbl_name == "fixed") {
-        if (is.null(model)) {
-          return(data.frame(Message = "Model not available"))
-        }
-        return(tryCatch(
-          get_model_results_table(model)$fixed,
-          error = function(e) data.frame(Message = paste0("Error: ", e$message))
-        ))
-      }
-
-      if (tbl_name %in% c("re_period", "re_cohort")) {
-        if (is.null(model)) {
-          return(data.frame(Message = "Model not available"))
-        }
-        rand <- tryCatch(
-          get_model_results_table(model)$random,
-          error = function(e) NULL
-        )
-        if (is.null(rand)) {
-          return(data.frame(Message = "No random-effect table available"))
-        }
-        if (tbl_name == "re_period") {
-          sel <- rand[
-            grepl("period", rand$effect, ignore.case = TRUE),
-            ,
-            drop = FALSE
-          ]
-        } else {
-          sel <- rand[
-            grepl("cohort", rand$effect, ignore.case = TRUE),
-            ,
-            drop = FALSE
-          ]
-        }
-        if (nrow(sel) == 0) {
-          return(data.frame(
-            Message = "No matching random-effect found in model."
-          ))
-        }
-        return(sel)
-      }
-
-      # Trend tables
-      if (tbl_name == "age_trend") {
-        if (is.null(model) || is.null(data_model)) {
-          return(data.frame(Message = "Model or data not available"))
-        }
-        return(tryCatch(
-          get_model_trend_data(
-            model,
-            x_axis = "age",
-            group_by = "null",
-            data_model = data_model
-          ),
-          error = function(e) data.frame(Message = paste0("Error: ", e$message))
-        ))
-      }
-      if (tbl_name == "period_trend") {
-        if (is.null(model) || is.null(data_model)) {
-          return(data.frame(Message = "Model or data not available"))
-        }
-        return(tryCatch(
-          get_model_trend_data(
-            model,
-            x_axis = "period",
-            group_by = "null",
-            data_model = data_model
-          ),
-          error = function(e) data.frame(Message = paste0("Error: ", e$message))
-        ))
-      }
-      if (tbl_name == "cohort_trend") {
-        if (is.null(model) || is.null(data_model)) {
-          return(data.frame(Message = "Model or data not available"))
-        }
-        return(tryCatch(
-          get_model_trend_data(
-            model,
-            x_axis = "cohort",
-            group_by = "null",
-            data_model = data_model
-          ),
-          error = function(e) data.frame(Message = paste0("Error: ", e$message))
-        ))
-      }
-
-      data.frame(Message = "Unknown selection")
+      result <- safe_build_table(tbl_name, get_model_obj(), get_data_model())
+      if (is.null(result)) data.frame(Message = "No data available") else result
     })
 
-    # Preview
+    # ── preview ──
     output$preview_table <- renderDT({
-      df <- selected_table()
-      if (is.null(df)) {
-        df <- data.frame(Message = "No data")
-      }
-      df <- as.data.frame(df)
-      DT::datatable(head(df, 10), options = list(pageLength = 10, dom = 't'))
+      DT::datatable(
+        as.data.frame(selected_table()),
+        options = list(
+          pageLength = 20,
+          scrollY = "400px",
+          scrollCollapse = TRUE,
+          dom = "tip"
+        ),
+        rownames = FALSE
+      )
     })
 
-    # Single download
+    # ── single table download ──
     output$dl_single <- downloadHandler(
       filename = function() {
         fmt <- input$file_format
-        tbl <- input$select_table
-        paste0(tbl, ifelse(fmt == "xlsx", ".xlsx", ".csv"))
+        base <- TABLE_FILENAMES[input$select_table] %||% input$select_table
+        paste0(base, if (fmt == "xlsx") ".xlsx" else ".csv")
       },
       content = function(file) {
-        df <- selected_table()
-        df <- as.data.frame(df)
-        fmt <- input$file_format
-        if (fmt == "csv") {
-          write.csv(df, file, row.names = FALSE, na = "")
-        } else {
-          if (requireNamespace("writexl", quietly = TRUE)) {
-            writexl::write_xlsx(df, path = file)
-          } else {
-            write.csv(df, file, row.names = FALSE, na = "")
-          }
-        }
+        write_table(selected_table(), file, input$file_format)
       }
     )
 
-    # RData download (all objects)
+    # ── RData download (all objects) ──
     output$dl_rdata <- downloadHandler(
       filename = function() paste0("hapc_results_", Sys.Date(), ".RData"),
       content = function(file) {
         model <- get_model_obj()
         data_model <- get_data_model()
-        fixed_tbl <- if (!is.null(model)) {
-          tryCatch(get_model_results_table(model)$fixed, error = function(e) {
-            NULL
-          })
-        } else {
-          NULL
-        }
-        random_tbl <- if (!is.null(model)) {
-          tryCatch(get_model_results_table(model)$random, error = function(e) {
-            NULL
-          })
-        } else {
-          NULL
-        }
-        age_tbl <- if (!is.null(model) && !is.null(data_model)) {
-          tryCatch(
-            get_model_trend_data(model, "age", "null", data_model),
-            error = function(e) NULL
-          )
-        } else {
-          NULL
-        }
-        period_tbl <- if (!is.null(model) && !is.null(data_model)) {
-          tryCatch(
-            get_model_trend_data(model, "period", "null", data_model),
-            error = function(e) NULL
-          )
-        } else {
-          NULL
-        }
-        cohort_tbl <- if (!is.null(model) && !is.null(data_model)) {
-          tryCatch(
-            get_model_trend_data(model, "cohort", "null", data_model),
-            error = function(e) NULL
-          )
-        } else {
-          NULL
-        }
+        all_tbls <- build_all_tables(model, data_model)
+
+        hapc_effect_tbl <- all_tbls[["combined"]]
+        age_tbl <- all_tbls[["age_trend"]]
+        period_tbl <- all_tbls[["period_trend"]]
+        cohort_tbl <- all_tbls[["cohort_trend"]]
+        basic_characteristics <- all_tbls[["basic_characteristics"]]
+        basic_characteristics_by_period <- all_tbls[[
+          "basic_characteristics_by_period"
+        ]]
+
         save(
           model,
           data_model,
-          fixed_tbl,
-          random_tbl,
+          hapc_effect_tbl,
           age_tbl,
           period_tbl,
           cohort_tbl,
+          basic_characteristics,
+          basic_characteristics_by_period,
           file = file
         )
       }
     )
 
-    # Zip download (CSV files)
+    # ── zip download (CSV files) ──
     output$dl_zip <- downloadHandler(
       filename = function() paste0("hapc_tables_", Sys.Date(), ".zip"),
       content = function(zipfile) {
-        tmpdir <- tempdir()
-        files <- c()
+        # Use a dedicated sub-directory so we can zip with relative paths,
+        # avoiding Windows absolute-path issues (colon in drive letter).
+        tmpdir <- file.path(tempdir(), "hapc_zip_export")
+        dir.create(tmpdir, showWarnings = FALSE, recursive = TRUE)
+        on.exit(unlink(tmpdir, recursive = TRUE), add = TRUE)
+
         model <- get_model_obj()
         data_model <- get_data_model()
+        all_tbls <- build_all_tables(model, data_model)
 
-        if (!is.null(model)) {
-          fixed_tbl <- tryCatch(
-            get_model_results_table(model)$fixed,
-            error = function(e) NULL
-          )
-          if (!is.null(fixed_tbl)) {
-            f <- file.path(tmpdir, "fixed_effects.csv")
-            write.csv(as.data.frame(fixed_tbl), f, row.names = FALSE)
-            files <- c(files, f)
-          }
-          random_tbl <- tryCatch(
-            get_model_results_table(model)$random,
-            error = function(e) NULL
-          )
-          if (!is.null(random_tbl)) {
-            f2 <- file.path(tmpdir, "random_effects.csv")
-            write.csv(as.data.frame(random_tbl), f2, row.names = FALSE)
-            files <- c(files, f2)
-          }
-        }
-
-        if (!is.null(model) && !is.null(data_model)) {
-          age_tbl <- tryCatch(
-            get_model_trend_data(model, "age", "null", data_model),
-            error = function(e) NULL
-          )
-          if (!is.null(age_tbl)) {
-            f3 <- file.path(tmpdir, "age_trend.csv")
-            write.csv(as.data.frame(age_tbl), f3, row.names = FALSE)
-            files <- c(files, f3)
-          }
-          period_tbl <- tryCatch(
-            get_model_trend_data(model, "period", "null", data_model),
-            error = function(e) NULL
-          )
-          if (!is.null(period_tbl)) {
-            f4 <- file.path(tmpdir, "period_trend.csv")
-            write.csv(as.data.frame(period_tbl), f4, row.names = FALSE)
-            files <- c(files, f4)
-          }
-          cohort_tbl <- tryCatch(
-            get_model_trend_data(model, "cohort", "null", data_model),
-            error = function(e) NULL
-          )
-          if (!is.null(cohort_tbl)) {
-            f5 <- file.path(tmpdir, "cohort_trend.csv")
-            write.csv(as.data.frame(cohort_tbl), f5, row.names = FALSE)
-            files <- c(files, f5)
-          }
-        }
-
-        # Basic descriptive (guess common vars)
-        if (
-          !is.null(data_model) &&
-            exists("get_basic_characteristics", where = globalenv())
-        ) {
-          guess_vars <- intersect(
-            c(
-              "sex",
-              "residence",
-              "age_group",
-              "living_arrangement",
-              "education_level",
-              "economic_status"
-            ),
-            names(data_model)
-          )
-          if (length(guess_vars) > 0) {
-            basic <- tryCatch(
-              get_basic_characteristics(data_model, guess_vars),
-              error = function(e) NULL
+        basenames <- vapply(
+          names(all_tbls),
+          function(nm) {
+            fname <- paste0(TABLE_FILENAMES[nm], ".csv")
+            write.csv(
+              as.data.frame(all_tbls[[nm]]),
+              file.path(tmpdir, fname),
+              row.names = FALSE
             )
-            if (!is.null(basic)) {
-              fb <- file.path(tmpdir, "basic_overall.csv")
-              write.csv(as.data.frame(basic), fb, row.names = FALSE)
-              files <- c(files, fb)
-            }
-            basic_by_period <- tryCatch(
-              get_basic_characteristics_by_period(data_model, guess_vars),
-              error = function(e) NULL
-            )
-            if (!is.null(basic_by_period)) {
-              fb2 <- file.path(tmpdir, "basic_by_period.csv")
-              write.csv(as.data.frame(basic_by_period), fb2, row.names = FALSE)
-              files <- c(files, fb2)
-            }
-          }
+            fname
+          },
+          character(1)
+        )
+
+        if (length(basenames) == 0) {
+          writeLines("No tables available", file.path(tmpdir, "empty.txt"))
+          basenames <- "empty.txt"
         }
 
-        if (length(files) == 0) {
-          placeholder <- file.path(tmpdir, "empty.txt")
-          writeLines("No tables available", placeholder)
-          files <- c(placeholder)
-        }
-        # Some installations of the 'zip' package do not support the 'extras' argument.
-        # Call without 'extras' for compatibility. If you need to remove paths inside
-        # the archive, consider using utils::zip(..., flags = "-j") on the host.
-        zip::zip(zipfile = zipfile, files = files)
+        # zip with relative paths from tmpdir to avoid ':' in archive paths
+        oldwd <- setwd(tmpdir)
+        on.exit(setwd(oldwd), add = TRUE)
+        zip::zip(
+          zipfile = zipfile,
+          files = unname(basenames)
+        )
       }
     )
   })

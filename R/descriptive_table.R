@@ -52,6 +52,37 @@ get_basic_characteristics <- function(
   }
 
   res_df <- bind_rows(results)
+  if (nrow(res_df) == 0) {
+    return(res_df)
+  }
+
+  total_n <- nrow(df)
+  total_disease_n <- sum(df[[disease_col]] == 1, na.rm = TRUE)
+  total_pct <- ifelse(total_n > 0, 100 * total_disease_n / total_n, NA_real_)
+  total_row <- tibble::tibble(
+    variable = "Total",
+    level = "",
+    N = total_n,
+    disease = ifelse(
+      is.na(total_pct),
+      paste0(total_disease_n, "(NA)"),
+      paste0(
+        total_disease_n,
+        "(",
+        formatC(total_pct, format = "f", digits = 2),
+        ")"
+      )
+    )
+  )
+
+  note_row <- tibble::tibble(
+    variable = "Note",
+    level = "",
+    N = NA_integer_,
+    disease = "Prevalences of disease are reported in parentheses."
+  )
+
+  res_df <- bind_rows(res_df, total_row, note_row)
   return(res_df)
 }
 
@@ -143,6 +174,15 @@ get_basic_characteristics_by_period <- function(
     total_row[[period_names[i]]] <- as.character(totals$total_n[i])
   }
 
-  res_final <- dplyr::bind_rows(res_all, total_row)
+  note_row <- tibble::tibble(variable = "Note", level = "")
+  for (i in seq_along(periods)) {
+    note_row[[period_names[i]]] <- if (i == 1) {
+      "Prevalences of disease are reported in parentheses."
+    } else {
+      ""
+    }
+  }
+
+  res_final <- dplyr::bind_rows(res_all, total_row, note_row)
   return(res_final)
 }
