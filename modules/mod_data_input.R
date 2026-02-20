@@ -151,9 +151,32 @@ mod_data_input_ui <- function(id) {
             style = "color: #337ab7; font-weight: 700;",
             "Input data"
           )),
+          tags$small(
+            style = "color: #666; display: block; margin-bottom: 6px;",
+            "Data requirements: individual-level data with disease status (*), age (*), period (*), and covariates; disease is coded 0 = no disease, 1 = disease."
+          ),
+          div(
+            style = "display: flex; align-items: center; gap: 10px;",
+            tags$label(
+              `for` = ns("file_input"),
+              "Upload data file (.csv, .dta, .sav, .xlsx, .RData, .rds)",
+              style = "font-size: 14px; margin: 0;"
+            ),
+            actionLink(
+              ns("load_sample1"),
+              tagList(
+                icon("download"),
+                tags$span(
+                  " Load sample 1",
+                  style = "color: #337ab7; font-size:14px;"
+                )
+              ),
+              style = "text-decoration: none;"
+            )
+          ),
           fileInput(
             ns("file_input"),
-            "Upload data file (.csv, .dta, .sav, .xlsx, .RData, .rds)",
+            label = NULL,
             multiple = FALSE,
             width = "100%",
             accept = c(
@@ -280,8 +303,11 @@ mod_data_input_server <- function(id, parent_session) {
       read_and_validate_data(input$file_input$datapath, tolower(ext))
     })
 
+    # sample-loaded data (if user clicks Load sample 1)
+    sample_loaded_data <- reactiveVal(NULL)
+
     output$data_preview <- renderDT({
-      df <- raw_data()
+      df <- uploaded_data()
       if (is.null(df)) {
         return(NULL)
       }
@@ -299,6 +325,11 @@ mod_data_input_server <- function(id, parent_session) {
     })
 
     uploaded_data <- reactive({
+      # prefer sample-loaded data when present (so Load sample works without writing files)
+      samp <- sample_loaded_data()
+      if (!is.null(samp)) {
+        return(samp)
+      }
       df <- raw_data()
       if (!is.null(df) && is.null(attr(df, "error_msg"))) df else NULL
     })
@@ -400,13 +431,115 @@ mod_data_input_server <- function(id, parent_session) {
         selected = character(0)
       )
 
-      # initialize formula terms: age_c + age_c2 + all other covariates
+      # initialize formula terms only if user has not already customised them
       covs_for_default <- setdiff(choices_vars, "age_c")
       default_terms <- c("age_c", "age_c2")
       if (length(covs_for_default) > 0) {
         default_terms <- c(default_terms, covs_for_default)
       }
       formula_terms(default_terms)
+    })
+
+    # Load sample 1: load tests/small_test_data.RData and prefill parameters
+    observeEvent(input$load_sample1, {
+      sample_path <- file.path(getwd(), "tests", "small_test_data.RData")
+      if (!file.exists(sample_path)) {
+        showNotification(
+          paste("Sample file not found:", sample_path),
+          type = "error"
+        )
+        return()
+      }
+      e <- new.env()
+      nm <- load(sample_path, envir = e)
+      # find first data.frame-like object
+      df <- NULL
+      for (n in nm) {
+        obj <- get(n, envir = e)
+        if (is.data.frame(obj) || inherits(obj, "tbl_df")) {
+          df <- obj
+          break
+        }
+      }
+      if (is.null(df)) {
+        showNotification("No data.frame found in sample file.", type = "error")
+        return()
+      }
+
+      # standardize core column names and types (match read_and_validate_data behavior)
+      current_cols <- colnames(df)
+      lower_current <- tolower(current_cols)
+      # REQUIRED_COLS is defined in R/data_clean.R (Age, Period, Disease)
+      req_cols <- c("Disease", "Age", "Period")
+      for (req_col in req_cols) {
+        match_idx <- which(lower_current == tolower(req_col))
+        if (length(match_idx) == 1) {
+          colnames(df)[match_idx] <- req_col
+        }
+      }
+
+      # convert core cols to numeric where present
+      f_to_numeric <- function(x) {
+        if (is.factor(x)) as.numeric(as.character(x)) else as.numeric(x)
+      }
+      if ("Age" %in% names(df)) {
+        df$Age <- f_to_numeric(df$Age)
+      }
+      if ("Period" %in% names(df)) {
+        df$Period <- f_to_numeric(df$Period)
+      }
+      if ("Disease" %in% names(df)) {
+        df$Disease <- f_to_numeric(df$Disease)
+      }
+
+      # remove rows with NA in core cols if they exist
+      if (all(c("Age", "Period", "Disease") %in% names(df))) {
+        df <- df %>% filter(!is.na(Age) & !is.na(Period) & !is.na(Disease))
+      }
+
+      # set sample data so uploaded_data() and preview/choices use it
+      sample_loaded_data(df)
+
+      # Defer parameter & formula updates until after reactive flush so preview/choices update first
+      session$onFlushed(
+        function() {
+          # preset parameters per user's spec
+          updateTextInput(
+            session,
+            "proj_title",
+            value = "care needs among Chinese older adults"
+          )
+          updateTextAreaInput(
+            session,
+            "desc",
+            value = "incidence of care needs calculated from CLHLS database, 2002-2021"
+          )
+          updateNumericInput(session, "period_start", value = 2002)
+          updateNumericInput(session, "period_end", value = 2021)
+          updateNumericInput(session, "age_start", value = 65)
+          updateNumericInput(session, "age_end", value = 105)
+          updateNumericInput(session, "intervals", value = 5)
+
+          # clear any selected random slopes
+          updatePickerInput(session, "period_slopes", selected = character(0))
+          updatePickerInput(session, "cohort_slopes", selected = character(0))
+
+          # set fixed formula terms exactly as requested (assumes test_data column names match)
+          final_terms <- c(
+            "age_c",
+            "age_c2",
+            "sex",
+            "urban_rural",
+            "education_level",
+            "economic_status",
+            "living_companion",
+            "age_c:sex",
+            "age_c:urban_rural"
+          )
+          formula_terms(final_terms)
+        },
+        once = TRUE
+      )
     })
 
     ## formula construction
