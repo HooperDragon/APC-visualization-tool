@@ -17,6 +17,7 @@ run_analysis <- function(
   cohort_slopes
 ) {
   ## parse covariates
+  incProgress(0.05, detail = "Parsing covariates...")
   all_covariates <- parse_covariates(
     fixed_formula,
     period_slopes,
@@ -24,6 +25,7 @@ run_analysis <- function(
   )
 
   ## pre-process data
+  incProgress(0.1, detail = "Preparing data...")
   data_for_model <- prepare_hapc_data(
     raw_df,
     list(intervals = params$intervals),
@@ -37,11 +39,14 @@ run_analysis <- function(
     cohort_slopes = cohort_slopes
   )
 
-  ## run the model
+  ## run the model (this is the slowest step)
+  incProgress(0.15, detail = "Fitting HAPC model (this may take a while)...")
   model <- tryCatch(
     run_dynamic_hapc(data_for_model, model_config),
     error = function(e) NULL
   )
+
+  incProgress(0.4, detail = "Checking convergence...")
 
   ## check the result and convergence
   if (is.null(model)) {
@@ -72,6 +77,7 @@ run_analysis <- function(
   }
 
   ## summary table
+  incProgress(0.1, detail = "Extracting results...")
   summary_table <- tryCatch(
     get_model_results_table(model),
     error = function(e) NULL

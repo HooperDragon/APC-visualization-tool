@@ -70,20 +70,20 @@ server <- function(input, output, session) {
       return()
     }
 
-    showNotification(
-      "Analysis started! Building HAPC model...",
-      type = "message"
-    ) # 在这里加一个进度条
     updateNavbarPage(session, "main_nav", selected = "tab_analysis")
 
-    # model fitting
-    result <- run_analysis(
-      raw_df = cleaned_grouped_data(),
-      params = data_input$params(),
-      fixed_formula = data_input$fixed_formula(),
-      period_slopes = data_input$period_slopes(),
-      cohort_slopes = data_input$cohort_slopes()
-    )
+    withProgress(message = "Running HAPC analysis...", value = 0, {
+      # model fitting (incProgress is called inside run_analysis)
+      result <- run_analysis(
+        raw_df = cleaned_grouped_data(),
+        params = data_input$params(),
+        fixed_formula = data_input$fixed_formula(),
+        period_slopes = data_input$period_slopes(),
+        cohort_slopes = data_input$cohort_slopes()
+      )
+
+      incProgress(0.1, detail = "Done.")
+    })
 
     # show notifications based on result
     if (!result$success) {
@@ -147,4 +147,3 @@ server <- function(input, output, session) {
 
 #### run the app ####
 shinyApp(ui, server)
-

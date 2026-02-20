@@ -86,34 +86,38 @@ mod_apc_result_server <- function(
         trend_msg(NULL)
 
         # calculate three trends data
-        withProgress(message = "Computing trends...", value = 0, {
-          incProgress(0.1, detail = "Age effect...")
-          cache$age <- tryCatch(
-            get_model_trend_data(model, "age", "null", data_model),
-            error = function(e) {
-              trend_msg(paste0("Age trend failed: ", conditionMessage(e)))
-              NULL
-            }
-          )
+        n_id <- showNotification(
+          "Computing trends...",
+          type = "message",
+          duration = NULL
+        )
 
-          incProgress(0.4, detail = "Period effect...")
-          cache$period <- tryCatch(
-            get_model_trend_data(model, "period", "null", data_model),
-            error = function(e) {
-              trend_msg(paste0("Period trend failed: ", conditionMessage(e)))
-              NULL
-            }
-          )
+        cache$age <- tryCatch(
+          get_model_trend_data(model, "age", "null", data_model),
+          error = function(e) {
+            trend_msg(paste0("Age trend failed: ", conditionMessage(e)))
+            NULL
+          }
+        )
 
-          incProgress(0.4, detail = "Cohort effect...")
-          cache$cohort <- tryCatch(
-            get_model_trend_data(model, "cohort", "null", data_model),
-            error = function(e) {
-              trend_msg(paste0("Cohort trend failed: ", conditionMessage(e)))
-              NULL
-            }
-          )
-        })
+        cache$period <- tryCatch(
+          get_model_trend_data(model, "period", "null", data_model),
+          error = function(e) {
+            trend_msg(paste0("Period trend failed: ", conditionMessage(e)))
+            NULL
+          }
+        )
+
+        cache$cohort <- tryCatch(
+          get_model_trend_data(model, "cohort", "null", data_model),
+          error = function(e) {
+            trend_msg(paste0("Cohort trend failed: ", conditionMessage(e)))
+            NULL
+          }
+        )
+
+        removeNotification(n_id)
+        showNotification("Trends computed.", type = "message", duration = 3)
       }
     })
 

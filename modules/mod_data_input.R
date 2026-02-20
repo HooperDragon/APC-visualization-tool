@@ -327,21 +327,28 @@ mod_data_input_server <- function(id, parent_session) {
           )
         }
         btn_id <- ns(paste0("remove_term_", i))
+        is_protected <- terms[i] %in% c("age_c", "age_c2")
+        remove_btn <- if (is_protected) {
+          # no remove button for required terms
+          NULL
+        } else {
+          tags$span(
+            class = "tag-remove",
+            onclick = sprintf(
+              "Shiny.setInputValue('%s', %d, {priority: 'event'})",
+              ns("remove_term"),
+              i
+            ),
+            HTML("&times;")
+          )
+        }
         tag_elements <- c(
           tag_elements,
           list(
             tags$span(
               class = "formula-tag",
               terms[i],
-              tags$span(
-                class = "tag-remove",
-                onclick = sprintf(
-                  "Shiny.setInputValue('%s', %d, {priority: 'event'})",
-                  ns("remove_term"),
-                  i
-                ),
-                HTML("&times;")
-              )
+              remove_btn
             )
           )
         )
@@ -355,6 +362,14 @@ mod_data_input_server <- function(id, parent_session) {
       idx <- input$remove_term
       current <- formula_terms()
       if (idx >= 1 && idx <= length(current)) {
+        # age_c and age_c2 are required and cannot be removed
+        if (current[idx] %in% c("age_c", "age_c2")) {
+          showNotification(
+            "'age_c' and 'age_c2' are required and cannot be removed.",
+            type = "warning"
+          )
+          return()
+        }
         formula_terms(current[-idx])
       }
     })

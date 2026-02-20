@@ -28,9 +28,11 @@ mod_descriptive_ui <- function(id) {
 
         # 3D figure
         div(
-          style = "border: 2px solid #e0e0e0; border-radius: 8px; padding: 5px; background: white; box-shadow: 2px 2px 5px rgba(0,0,0,0.05);",
-
-          plotlyOutput(ns("plot_3d"), height = "550px")
+          style = "border: 2px solid #e0e0e0; border-radius: 8px; padding: 5px; background: white; box-shadow: 2px 2px 5px rgba(0,0,0,0.05); overflow: hidden;",
+          div(
+            style = "margin-top: -60px; margin-bottom: -30px;",
+            plotlyOutput(ns("plot_3d"), height = "620px")
+          )
         ),
 
         # sliding block

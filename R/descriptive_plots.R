@@ -130,9 +130,9 @@ plot_3d_base <- function(df) {
       showlegend = FALSE,
       scene = list(
         camera = list(
-          eye = list(x = -1.5, y = -1.5, z = 0.1),
+          eye = list(x = -1.5, y = -1.5, z = 0.5),
           up = list(x = 0, y = 0, z = 1),
-          center = list(x = 0, y = 0, z = -0.2)
+          center = list(x = 0, y = 0, z = 0)
         ),
         xaxis = list(
           title = "Age",
