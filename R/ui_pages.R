@@ -43,7 +43,6 @@ build_ui <- function() {
       tabPanel(
         "Export Results",
         value = "tab_export",
-        icon = icon("download"),
         page_export()
       )
     )

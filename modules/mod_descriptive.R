@@ -2,65 +2,82 @@
 mod_descriptive_ui <- function(id) {
   ns <- NS(id)
   tagList(
-    fluidRow(
-      ## left column: 3D figure and controls
-      column(
-        7,
-        # ratio buttons
-        div(
-          style = "margin-bottom: 15px;",
-          tags$strong(
-            "Slice Dimension: ",
-            style = "font-size: 16px; margin-right: 10px;"
-          ),
-          radioButtons(
-            ns("slice_dim"),
-            label = NULL,
-            choices = c(
-              "Period" = "period",
-              "Age" = "age",
-              "Cohort" = "cohort",
-              "Null" = "null"
-            ),
-            inline = TRUE
-          )
-        ),
+    
+    tags$head(tags$style(HTML("
+      .slice-radio-container .form-group { margin-bottom: 0 !important; }
+      .slice-radio-container .radio-inline { margin-top: 0 !important; padding-top: 0 !important; margin-bottom: 0 !important; }
+    "))),
 
-        # 3D figure
-        div(
-          style = "border: 2px solid #e0e0e0; border-radius: 8px; padding: 5px; background: white; box-shadow: 2px 2px 5px rgba(0,0,0,0.05); overflow: hidden;",
+    ## Main Layout
+    div(class = "row", 
+      
+      ## Left Column (7/12)
+      div(class = "col-sm-7",
+          
+          # 3D Figure
           div(
-            style = "margin-top: -60px; margin-bottom: -30px;",
-            plotlyOutput(ns("plot_3d"), height = "620px")
+            class = "card-style",
+            style = "margin-bottom: 20px;", 
+            
+            div(
+              style = "border-bottom: 1px solid #eeeeee; padding-bottom: 12px; margin-bottom: 15px; 
+                       position: relative; z-index: 10; background-color: white;",
+              h3("3D Figure View", 
+                 style = "color: #337ab7; font-weight: 700; margin: 0; font-size: 22px; border: none !important;")
+            ),
+            div(
+              style = "margin-top: -30px; margin-bottom: -20px; position: relative; z-index: 1;", 
+              plotlyOutput(ns("plot_3d"), height = "550px") 
+            )
+          ),
+          
+          # Controls
+          div(
+            class = "card-style",
+            style = "background-color: #fcfcfc; border: 1px solid #e9ecef; border-radius: 8px; padding: 20px;", 
+            
+            div(
+              class = "slice-radio-container", 
+              style = "display: flex; align-items: center; margin-bottom: 15px;",
+              tags$strong("Slice Dimension:", style = "font-size: 16px; margin-right: 20px; color: #333;"),
+              radioButtons(
+                ns("slice_dim"),
+                label = NULL,
+                choices = c("Period" = "period", "Age" = "age", "Cohort" = "cohort", "Null" = "null"),
+                inline = TRUE
+              )
+            ),
+            div(
+              style = "border-top: 1px dashed #dee2e6; padding-top: 15px;",
+              uiOutput(ns("slider_ui"))
+            ),
+            div(
+              style = "color: #888; font-size: 0.9em; margin-top: 5px; text-align: left;",
+              icon("info-circle"),
+              " Drag the slider above or click anywhere on the 3D figure to update the 2D slice."
+            )
           )
-        ),
-
-        # sliding block
-        wellPanel(
-          style = "margin-top: 15px; padding: 15px 20px; background-color: #f8f9fa; border: 1px solid #ddd;",
-          uiOutput(ns("slider_ui"))
-        )
       ),
 
-      ## righ column: 2D slice view
-      column(
-        5,
-        div(
-          style = "margin-top: 45px; height: 100%; padding-left: 10px;",
-
-          h4(
-            "2D Section View",
-            style = "text-align: center; margin-bottom: 25px; color: #333;"
-          ),
-
-          plotOutput(ns("plot_2d"), height = "500px"),
-
+      ## --- Right Column (5/12) ---
+      div(class = "col-sm-5",
+          
+          # 2D View
           div(
-            style = "margin-top: 20px; color: #777; font-size: 0.9em; text-align: center; font-style: italic;",
-            icon("info-circle"),
-            " Drag the slider on the left or click the 3D figure to update."
+            class = "card-style",
+            style = "display: flex; flex-direction: column;",
+            
+            div(
+              style = "border-bottom: 1px solid #eeeeee; padding-bottom: 12px; margin-bottom: 15px;",
+              h3("2D Slice View", 
+                 style = "color: #337ab7; font-weight: 700; margin: 0; font-size: 22px; border: none !important;")
+            ),
+            
+            div(
+              style = "flex-grow: 1;",
+              plotOutput(ns("plot_2d"), height = "500px") 
+            )
           )
-        )
       )
     )
   )
@@ -111,7 +128,7 @@ mod_descriptive_server <- function(id, data_r) {
 
       if (input$slice_dim == "period") {
         vals <- sort(unique(df$period))
-        label_txt <- span(icon("clock"), " Select Period:")
+        label_txt <- span("Select Period:")
 
         # ensure only existing period can be selected
         shinyWidgets::sliderTextInput(
@@ -127,11 +144,11 @@ mod_descriptive_server <- function(id, data_r) {
         # age/cohort sliding block
         if (input$slice_dim == "age") {
           vals <- sort(unique(df$age_start))
-          label_txt <- span(icon("user"), " Select Age Group:")
+          label_txt <- span("Select Age Group:")
           step_val <- slice_step()
         } else if (input$slice_dim == "cohort") {
           vals <- sort(unique(df$cohort_start))
-          label_txt <- span(icon("users"), " Select Cohort:")
+          label_txt <- span("Select Cohort:")
           step_val <- slice_step()
         }
 

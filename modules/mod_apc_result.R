@@ -6,8 +6,12 @@ mod_apc_result_ui <- function(id) {
       ## left colomun: settings
       column(
         3,
-        wellPanel(
-          h4("Visual Settings"),
+        div(
+          class = "card-style",
+          h3(tags$span(
+            style = "color: #337ab7; font-weight: 700;",
+            "Visual Settings"
+          )),
 
           # x axis
           radioButtons(
@@ -31,7 +35,7 @@ mod_apc_result_ui <- function(id) {
       column(
         9,
         div(
-          style = "border: 1px solid #ddd; padding: 10px; border-radius: 5px; background: white;",
+          class = "card-style",
           plotOutput(ns("trend_plot"), height = "700px")
         ),
         div(id = ns("warning_msg"), style = "color: orange; margin-top: 10px;")

@@ -13,9 +13,9 @@ APP_CSS <- "
 /* card */
 .card-style {
   background-color: #ffffff;
-  border: 2px solid #333;
-  border-radius: 5px;
-  box-shadow: 5px 5px 0px rgba(0,0,0,0.2);
+  border: 2px solid #e0e0e0;
+  border-radius: 8px;
+  box-shadow: 2px 2px 5px rgba(0,0,0,0.05);
   padding: 20px;
   margin-bottom: 20px;
   height: 100%;

@@ -19,6 +19,29 @@ mod_download_ui <- function(id) {
         margin-top: 20px;
         padding-top: 20px;
       }
+
+      .dataTables_wrapper .dataTables_paginate .paginate_button {
+        padding: 5px 12px !important;
+        margin-left: 4px !important;
+        border-radius: 4px !important;    /* 小圆角 */
+        border: 1px solid transparent !important;
+        background: none !important;      /* 去掉丑陋的渐变背景 */
+        color: #555 !important;
+        font-weight: 500 !important;
+      }
+      
+      .dataTables_wrapper .dataTables_paginate .paginate_button:hover {
+        background: #f0f0f0 !important;   /* 悬停浅灰色 */
+        border: 1px solid #ddd !important;
+        color: #333 !important;
+      }
+      
+      .dataTables_wrapper .dataTables_paginate .paginate_button.current,
+      .dataTables_wrapper .dataTables_paginate .paginate_button.current:hover {
+        background: #337ab7 !important;   /* 当前页变成主题蓝，呼应你的标题 */
+        color: white !important;
+        border: 1px solid #337ab7 !important;
+      }
     "
     ))),
 
@@ -29,12 +52,15 @@ mod_download_ui <- function(id) {
         4,
         div(
           class = "card-style",
-          h4(icon("box-archive"), " Batch Export"),
+          h3(tags$span(
+            style = "color: #337ab7; font-weight: 700;",
+            "Batch Export"
+          )),
           tags$p(
-            "Download all results and models in a single package.",
+            icon("info-circle"),
+            "Download all results and models in a single package, which contains separate .csv files for Fixed Effects, Random Effects, and Trend Data.",
             style = "color: grey; font-size: 0.9em;"
           ),
-          hr(),
 
           downloadButton(
             ns("dl_rdata"),
@@ -49,10 +75,6 @@ mod_download_ui <- function(id) {
           ),
 
           br(),
-          tags$small(
-            icon("info-circle"),
-            " The .zip file contains separate Excel files for Fixed Effects, Random Effects, and Trend Data."
-          )
         )
       ),
 
@@ -62,8 +84,14 @@ mod_download_ui <- function(id) {
         div(
           class = "card-style",
           div(
+            style = "display: flex; justify-content: space-between; align-items: center; 
+                     border-bottom: 1px solid #f0f0f0; padding-bottom: 12px; margin-bottom: 20px;",
+            
+            h3(
+              "Individual Table Export",
+              style = "color: #337ab7; font-weight: 700; margin: 0; font-size: 24px; border: none !important; text-decoration: none;"
+            ),
             style = "display: flex; justify-content: space-between; align-items: center;",
-            h4(icon("table"), " Individual Table Export"),
 
             downloadButton(
               ns("dl_single"),
@@ -71,7 +99,6 @@ mod_download_ui <- function(id) {
               class = "btn-success"
             )
           ),
-          hr(),
 
           fluidRow(
             # choose the table
@@ -106,7 +133,7 @@ mod_download_ui <- function(id) {
           # preview
           div(
             class = "preview-container",
-            h5("Data Preview:"),
+            h5("Data Preview:", style = "font-weight: bold"),
             DTOutput(ns("preview_table"))
           )
         )
@@ -334,7 +361,23 @@ mod_download_server <- function(
           pageLength = 20,
           scrollY = "400px",
           scrollCollapse = TRUE,
-          dom = "tip"
+          dom = "tp",
+          pagingType = "simple_numbers",
+          language = list(
+            paginate = list(
+              previous = "<",
+              `next` = ">"
+            )
+          ),
+          ordering = FALSE,
+          columnDefs = list(
+            list(className = 'dt-center', targets = "_all")
+          ),
+          initComplete = JS(
+            "function(settings, json){",
+            " $('thead th', this.api().table().container()).css({'border-top':'1px solid #111'});",
+            "}"
+          )
         ),
         rownames = FALSE
       )

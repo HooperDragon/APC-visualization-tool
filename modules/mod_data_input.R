@@ -77,20 +77,22 @@ mod_data_input_ui <- function(id) {
             value = DEFAULTS$intervals
           ),
           hr(),
-          h4("Model Specification"),
 
           # variables pool
-          selectInput(
-            ns("model_vars"),
-            "Select Variables:",
-            choices = NULL,
-            multiple = TRUE,
-            selectize = TRUE
+          div(
+            style = "margin-top: 5px;",
+            selectInput(
+              ns("model_vars"),
+              "Select Variables:",
+              choices = NULL,
+              multiple = TRUE,
+              selectize = TRUE
+            )
           ),
 
           # buttons
           div(
-            style = "display: flex; gap: 5px; margin-bottom: 10px;",
+            style = "display: flex; gap: 5px; margin-top: -6px; margin-bottom: 12px;",
             actionButton(
               ns("add_main_effect"),
               "Add Main",
@@ -109,19 +111,25 @@ mod_data_input_ui <- function(id) {
           ),
 
           # fixed formula (tag-based)
-          tags$label("Fixed Effects Structure:"),
-          uiOutput(ns("formula_tags_display")),
+          div(
+            style = "margin-top: 6px;",
+            tags$label("Fixed Effects Structure:"),
+            uiOutput(ns("formula_tags_display"))
+          ),
 
           tags$small(
             style = "color:grey;",
-            "Tip: Select 2 vars and click 'Add Interaction' to add terms like 'sex:residence'."
+            icon("info-circle"),
+            " Select 2 vars and click 'Add Interaction' to add terms like 'sex:residence'."
           ),
 
-          br(),
           hr(),
 
           # random formula
-          h5("Random Effects"),
+          div(
+            style = "margin-top: 10px;",
+            tags$label("Random Effects:")
+          ),
           pickerInput(
             ns("period_slopes"),
             "Vars varying by Period (cov | period):",
@@ -146,17 +154,23 @@ mod_data_input_ui <- function(id) {
       column(
         width = 8,
         div(
-          class = "card-style",
+          class = "card-style input-data-card",
           h3(tags$span(
             style = "color: #337ab7; font-weight: 700;",
             "Input data"
           )),
+          tags$style(HTML(
+            ".input-data-card .form-group { margin-bottom: 0px !important; }
+             .input-data-card .shiny-input-container { margin-bottom: 0px !important; }
+             .input-data-card .progress { margin-bottom: 0px !important; }"
+          )),
           tags$small(
-            style = "color: #666; display: block; margin-bottom: 6px;",
-            "Data requirements: individual-level data with disease status (*), age (*), period (*), and covariates; disease is coded 0 = no disease, 1 = disease."
+            style = "color: #666; display: block; margin-bottom: 4px;",
+            icon("info-circle"),
+            " Data requirements: individual-level data with disease status (*), age (*), period (*), and covariates; disease is coded 0 = no disease, 1 = disease."
           ),
           div(
-            style = "display: flex; align-items: center; gap: 10px;",
+            style = "display: flex; align-items: center; gap: 8px; margin-bottom: 4px;",
             tags$label(
               `for` = ns("file_input"),
               "Upload data file (.csv, .dta, .sav, .xlsx, .RData, .rds)",
@@ -174,22 +188,28 @@ mod_data_input_ui <- function(id) {
               style = "text-decoration: none;"
             )
           ),
-          fileInput(
-            ns("file_input"),
-            label = NULL,
-            multiple = FALSE,
-            width = "100%",
-            accept = c(
-              ".csv",
-              ".dta",
-              ".xlsx",
-              ".xls",
-              ".sav",
-              ".Rdata",
-              ".rds"
+          div(
+            style = "margin-bottom: 0;",
+            fileInput(
+              ns("file_input"),
+              label = NULL,
+              multiple = FALSE,
+              width = "100%",
+              accept = c(
+                ".csv",
+                ".dta",
+                ".xlsx",
+                ".xls",
+                ".sav",
+                ".Rdata",
+                ".rds"
+              )
             )
           ),
-          h5("Data Preview (first 10 rows):"),
+          h5(
+            "Data Preview (first 10 rows):",
+            style = "margin-top: 10px; margin-bottom: 4px; font-weight: bold"
+          ),
           DTOutput(ns("data_preview"))
         ),
         div(
@@ -315,11 +335,21 @@ mod_data_input_server <- function(id, parent_session) {
       validate(need(is.null(err), err))
       datatable(
         df,
+        rownames = FALSE,
         options = list(
           scrollX = TRUE,
           scrollY = 300,
           scroller = TRUE,
-          dom = "t"
+          dom = "t",
+          ordering = FALSE,
+          columnDefs = list(
+            list(className = 'dt-center', targets = "_all")
+          ),
+          initComplete = JS(
+            "function(settings, json){",
+            " $('thead th', this.api().table().container()).css({'border-top':'1px solid #111'});",
+            "}"
+          )
         )
       )
     })
@@ -469,6 +499,7 @@ mod_data_input_server <- function(id, parent_session) {
       # standardize core column names and types (match read_and_validate_data behavior)
       current_cols <- colnames(df)
       lower_current <- tolower(current_cols)
+
       # REQUIRED_COLS is defined in R/data_clean.R (Age, Period, Disease)
       req_cols <- c("Disease", "Age", "Period")
       for (req_col in req_cols) {

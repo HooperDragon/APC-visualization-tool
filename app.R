@@ -24,10 +24,10 @@ source("R/hapc_model.R")
 source("R/hapc_plots.R")
 source("R/download_tables.R")
 
+source("modules/mod_data_input.R")
 source("modules/mod_descriptive.R")
 source("modules/mod_apc_result.R")
 source("modules/mod_download.R")
-source("modules/mod_data_input.R")
 
 #### ui ####
 ui <- build_ui()
