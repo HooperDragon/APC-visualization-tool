@@ -28,6 +28,7 @@ source("modules/mod_data_input.R")
 source("modules/mod_descriptive.R")
 source("modules/mod_apc_result.R")
 source("modules/mod_download.R")
+source("modules/mod_help.R")
 
 #### ui ####
 ui <- build_ui()
@@ -143,6 +144,9 @@ server <- function(input, output, session) {
     period_slopes_r = period_slopes_r,
     cohort_slopes_r = cohort_slopes_r
   )
+
+  ## help module (renders help_document.html from www/ and provides PDF download)
+  mod_help_server("help_module_1")
 }
 
 #### run the app ####

@@ -36,7 +36,9 @@ mod_data_input_ui <- function(id) {
               numericInput(
                 ns("period_start"),
                 NULL,
-                value = DEFAULTS$period_start
+                value = DEFAULTS$period_start,
+                step = 1,
+                min = 0
               )
             ),
             column(
@@ -48,7 +50,13 @@ mod_data_input_ui <- function(id) {
             ),
             column(
               5,
-              numericInput(ns("period_end"), NULL, value = DEFAULTS$period_end)
+              numericInput(
+                ns("period_end"),
+                NULL,
+                value = DEFAULTS$period_end,
+                step = 1,
+                min = 0
+              )
             )
           ),
 
@@ -56,7 +64,13 @@ mod_data_input_ui <- function(id) {
           fluidRow(
             column(
               5,
-              numericInput(ns("age_start"), NULL, value = DEFAULTS$age_start)
+              numericInput(
+                ns("age_start"),
+                NULL,
+                value = DEFAULTS$age_start,
+                step = 1,
+                min = 0
+              )
             ),
             column(
               2,
@@ -67,14 +81,23 @@ mod_data_input_ui <- function(id) {
             ),
             column(
               5,
-              numericInput(ns("age_end"), NULL, value = DEFAULTS$age_end)
+              numericInput(
+                ns("age_end"),
+                NULL,
+                value = DEFAULTS$age_end,
+                step = 1,
+                min = 0
+              )
             )
           ),
 
           numericInput(
             ns("intervals"),
             "Intervals (year)",
-            value = DEFAULTS$intervals
+            value = DEFAULTS$intervals,
+            step = 1,
+            min = 2,
+            max = 10
           ),
           hr(),
 
@@ -123,12 +146,22 @@ mod_data_input_ui <- function(id) {
             " Select 2 vars and click 'Add Interaction' to add terms like 'sex:residence'."
           ),
 
+          # prevent typing decimals/fractions into the numeric inputs (client-side guard)
+          tags$script(HTML(sprintf(
+            "(function(){\nvar ids = ['%s','%s','%s','%s','%s'];\nids.forEach(function(id){var el=document.getElementById(id); if(!el) return; el.setAttribute('inputmode','numeric'); el.addEventListener('input', function(e){var v=this.value||''; v=v.replace(/[^0-9\\.]/g,''); if(v.indexOf('.')!==-1) v=v.split('.')[0]; this.value=v; this.dispatchEvent(new Event('change'));});});})();",
+            ns("period_start"),
+            ns("period_end"),
+            ns("age_start"),
+            ns("age_end"),
+            ns("intervals")
+          ))),
+
           hr(),
 
           # random formula
           div(
             style = "margin-top: 10px;",
-            tags$label("Random Effects:")
+            tags$label("Random Effects Structure:")
           ),
           pickerInput(
             ns("period_slopes"),
@@ -201,8 +234,7 @@ mod_data_input_ui <- function(id) {
                 ".xlsx",
                 ".xls",
                 ".sav",
-                ".Rdata",
-                ".rds"
+                ".Rdata"
               )
             )
           ),
@@ -252,36 +284,71 @@ mod_data_input_server <- function(id, parent_session) {
         input$age_end,
         input$intervals
       )
-      if (
-        input$period_start < 0 ||
-          input$period_end < 0 ||
-          input$period_start >= input$period_end
-      ) {
-        return("Invalid Period")
+
+      is_whole <- function(x) {
+        if (is.null(x) || !is.finite(x)) {
+          return(FALSE)
+        }
+        x == floor(x)
       }
-      if (
-        input$age_start < 0 ||
-          input$age_end < 0 ||
-          input$age_start >= input$age_end
-      ) {
-        return("Invalid Age")
+
+      # Period checks
+      if (!is_whole(input$period_start) || !is_whole(input$period_end)) {
+        return("Period range must be integers.")
       }
-      if (input$intervals <= 0) {
-        return("Invalid Interval")
+      if (input$period_start < 0 || input$period_end < 0) {
+        return("Period range cannot be negative.")
       }
+      if (input$period_start >= input$period_end) {
+        return("Period start must be less than period end.")
+      }
+
+      # Age checks
+      if (!is_whole(input$age_start) || !is_whole(input$age_end)) {
+        return("Age range must be integers.")
+      }
+      if (input$age_start < 0 || input$age_end < 0) {
+        return("Age range cannot be negative.")
+      }
+      if (input$age_start >= input$age_end) {
+        return("Age start must be less than age end.")
+      }
+
+      # Intervals checks
+      if (!is_whole(input$intervals)) {
+        return("Intervals must be an integer between 2 and 10.")
+      }
+      if (input$intervals < 2 || input$intervals > 10) {
+        return("Intervals must be between 2 and 10.")
+      }
+
       return(NULL)
     })
 
+    # keep the UI slot but show parameter validation via persistent notification
     output$validation_alert <- renderUI({
-      msg <- validation_error_msg()
-      if (is.null(msg)) {
-        return(NULL)
+      return(NULL)
+    })
+
+    # track last shown parameter error to avoid duplicates
+    last_param_error <- reactiveVal(NULL)
+
+    # show parameter validation as persistent notification (right-bottom), remove when fixed
+    observe({
+      err <- validation_error_msg()
+      if (!is.null(err) && !identical(err, last_param_error())) {
+        last_param_error(err)
+        showNotification(
+          err,
+          type = "error",
+          duration = NULL,
+          id = "param_error"
+        )
       }
-      div(
-        style = "color: red; font-weight: bold; margin-top: 10px;",
-        icon("triangle-exclamation"),
-        msg
-      )
+      if (is.null(err)) {
+        tryCatch(removeNotification("param_error"), error = function(e) NULL)
+        last_param_error(NULL)
+      }
     })
 
     # error when age>105
@@ -325,14 +392,17 @@ mod_data_input_server <- function(id, parent_session) {
 
     # sample-loaded data (if user clicks Load sample 1)
     sample_loaded_data <- reactiveVal(NULL)
+    # track last shown data error message to avoid duplicate notifications
+    last_data_error <- reactiveVal(NULL)
 
     output$data_preview <- renderDT({
+      # prefer sample-loaded or uploaded data for preview
       df <- uploaded_data()
+
+      # if no valid data to preview, render nothing
       if (is.null(df)) {
         return(NULL)
       }
-      err <- attr(df, "error_msg")
-      validate(need(is.null(err), err))
       datatable(
         df,
         rownames = FALSE,
@@ -357,11 +427,42 @@ mod_data_input_server <- function(id, parent_session) {
     uploaded_data <- reactive({
       # prefer sample-loaded data when present (so Load sample works without writing files)
       samp <- sample_loaded_data()
-      if (!is.null(samp)) {
+      # only use sample data if it does not carry an error attribute
+      if (!is.null(samp) && is.null(attr(samp, "error_msg"))) {
         return(samp)
       }
       df <- raw_data()
       if (!is.null(df) && is.null(attr(df, "error_msg"))) df else NULL
+    })
+
+    # observe raw/sample reader for data errors and show a single notification
+    observe({
+      err_msg <- NULL
+      samp <- sample_loaded_data()
+      if (!is.null(samp)) {
+        err_msg <- attr(samp, "error_msg")
+      }
+      if (is.null(err_msg)) {
+        rd <- tryCatch(raw_data(), error = function(e) NULL)
+        if (!is.null(rd)) err_msg <- attr(rd, "error_msg")
+      }
+
+      # only show notification when a new error message appears
+      if (!is.null(err_msg) && !identical(err_msg, last_data_error())) {
+        last_data_error(err_msg)
+        # show persistent notification (until removed) using a fixed id
+        showNotification(
+          err_msg,
+          type = "error",
+          duration = NULL,
+          id = "data_error"
+        )
+      }
+      if (is.null(err_msg)) {
+        # remove persistent notification when error cleared
+        tryCatch(removeNotification("data_error"), error = function(e) NULL)
+        last_data_error(NULL)
+      }
     })
 
     ## formula terms management (tag-based)

@@ -17,6 +17,11 @@ page_export <- function() {
   mod_download_ui("download_module_1")
 }
 
+#### help page ####
+page_help <- function() {
+  mod_help_ui("help_module_1")
+}
+
 #### main ui ####
 build_ui <- function() {
   tagList(
@@ -44,6 +49,13 @@ build_ui <- function() {
         "Export Results",
         value = "tab_export",
         page_export()
+      ),
+      
+      ## Page 5: Help
+      tabPanel(
+        "Help",
+        value = "tab_help",
+        page_help()
       )
     )
   )
