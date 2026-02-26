@@ -142,7 +142,8 @@ server <- function(input, output, session) {
     trend_data = NULL,
     covariates_r = age_stratify_covariates,
     period_slopes_r = period_slopes_r,
-    cohort_slopes_r = cohort_slopes_r
+    cohort_slopes_r = cohort_slopes_r,
+    proj_title = data_input$proj_title
   )
 
   ## help module (renders help_document.html from www/ and provides PDF download)

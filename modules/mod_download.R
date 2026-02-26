@@ -11,6 +11,9 @@ mod_download_ui <- function(id) {
         margin-bottom: 10px; 
         font-size: 16px; 
         height: 45px; 
+        display: flex;
+        align-items: center;
+        gap: 10px;
         text-align: left; 
         padding-left: 20px;
       }
@@ -23,22 +26,22 @@ mod_download_ui <- function(id) {
       .dataTables_wrapper .dataTables_paginate .paginate_button {
         padding: 5px 12px !important;
         margin-left: 4px !important;
-        border-radius: 4px !important;    /* 小圆角 */
+        border-radius: 4px !important;    
         border: 1px solid transparent !important;
-        background: none !important;      /* 去掉丑陋的渐变背景 */
+        background: none !important;      
         color: #555 !important;
         font-weight: 500 !important;
       }
       
       .dataTables_wrapper .dataTables_paginate .paginate_button:hover {
-        background: #f0f0f0 !important;   /* 悬停浅灰色 */
+        background: #f0f0f0 !important;   
         border: 1px solid #ddd !important;
         color: #333 !important;
       }
       
       .dataTables_wrapper .dataTables_paginate .paginate_button.current,
       .dataTables_wrapper .dataTables_paginate .paginate_button.current:hover {
-        background: #337ab7 !important;   /* 当前页变成主题蓝，呼应你的标题 */
+        background: #337ab7 !important;   
         color: white !important;
         border: 1px solid #337ab7 !important;
       }
@@ -70,7 +73,7 @@ mod_download_ui <- function(id) {
 
           downloadButton(
             ns("dl_zip"),
-            " Download All Tables (.zip)",
+            " Download All as .zip",
             class = "btn-warning download-btn-large"
           ),
 
@@ -86,7 +89,7 @@ mod_download_ui <- function(id) {
           div(
             style = "display: flex; justify-content: space-between; align-items: center; 
                      border-bottom: 1px solid #f0f0f0; padding-bottom: 12px; margin-bottom: 20px;",
-            
+
             h3(
               "Individual Table Export",
               style = "color: #337ab7; font-weight: 700; margin: 0; font-size: 24px; border: none !important; text-decoration: none;"
@@ -242,10 +245,29 @@ mod_download_server <- function(
   trend_data = NULL,
   covariates_r = reactive(character(0)),
   period_slopes_r = reactive(character(0)),
-  cohort_slopes_r = reactive(character(0))
+  cohort_slopes_r = reactive(character(0)),
+  proj_title = reactive(NULL)
 ) {
   moduleServer(id, function(input, output, session) {
     ns <- session$ns
+
+    # safe project-title prefix: lowercase, non-alphanum -> underscore, collapse underscores
+    safe_prefix <- reactive({
+      t <- tryCatch(proj_title(), error = function(e) NULL)
+      if (is.null(t) || length(t) == 0) {
+        return("")
+      }
+      t <- as.character(t)
+      t <- trimws(t)
+      if (!nzchar(t)) {
+        return("")
+      }
+      s <- tolower(t)
+      s <- gsub("[^a-z0-9]+", "_", s)
+      s <- gsub("_+", "_", s)
+      s <- gsub("^_|_$", "", s)
+      s
+    })
 
     # ── safe accessors ──
     get_model_obj <- reactive({
@@ -388,6 +410,10 @@ mod_download_server <- function(
       filename = function() {
         fmt <- input$file_format
         base <- TABLE_FILENAMES[input$select_table] %||% input$select_table
+        prefix <- safe_prefix()
+        if (nzchar(prefix)) {
+          base <- paste0(prefix, "_", base)
+        }
         paste0(base, if (fmt == "xlsx") ".xlsx" else ".csv")
       },
       content = function(file) {
@@ -397,7 +423,15 @@ mod_download_server <- function(
 
     # ── RData download (all objects) ──
     output$dl_rdata <- downloadHandler(
-      filename = function() paste0("hapc_results_", Sys.Date(), ".RData"),
+      filename = function() {
+        prefix <- safe_prefix()
+        paste0(
+          if (nzchar(prefix)) paste0(prefix, "_") else "",
+          "hapc_results_",
+          Sys.Date(),
+          ".RData"
+        )
+      },
       content = function(file) {
         model <- get_model_obj()
         data_model <- get_data_model()
@@ -428,7 +462,15 @@ mod_download_server <- function(
 
     # ── zip download (CSV files) ──
     output$dl_zip <- downloadHandler(
-      filename = function() paste0("hapc_tables_", Sys.Date(), ".zip"),
+      filename = function() {
+        prefix <- safe_prefix()
+        paste0(
+          if (nzchar(prefix)) paste0(prefix, "_") else "",
+          "hapc_tables_",
+          Sys.Date(),
+          ".zip"
+        )
+      },
       content = function(zipfile) {
         # Use a dedicated sub-directory so we can zip with relative paths,
         # avoiding Windows absolute-path issues (colon in drive letter).
@@ -440,10 +482,15 @@ mod_download_server <- function(
         data_model <- get_data_model()
         all_tbls <- build_all_tables(model, data_model)
 
+        prefix <- safe_prefix()
         basenames <- vapply(
           names(all_tbls),
           function(nm) {
-            fname <- paste0(TABLE_FILENAMES[nm], ".csv")
+            base <- TABLE_FILENAMES[nm]
+            if (nzchar(prefix)) {
+              base <- paste0(prefix, "_", base)
+            }
+            fname <- paste0(base, ".csv")
             write.csv(
               as.data.frame(all_tbls[[nm]]),
               file.path(tmpdir, fname),

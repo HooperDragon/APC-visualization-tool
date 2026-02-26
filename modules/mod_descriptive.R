@@ -2,82 +2,98 @@
 mod_descriptive_ui <- function(id) {
   ns <- NS(id)
   tagList(
-    
-    tags$head(tags$style(HTML("
+    tags$head(tags$style(HTML(
+      "
       .slice-radio-container .form-group { margin-bottom: 0 !important; }
       .slice-radio-container .radio-inline { margin-top: 0 !important; padding-top: 0 !important; margin-bottom: 0 !important; }
-    "))),
+    "
+    ))),
 
     ## Main Layout
-    div(class = "row", 
-      
+    div(
+      class = "row",
+
       ## Left Column (7/12)
-      div(class = "col-sm-7",
-          
-          # 3D Figure
+      div(
+        class = "col-sm-7",
+
+        # 3D Figure
+        div(
+          class = "card-style",
+          style = "margin-bottom: 20px;",
+
           div(
-            class = "card-style",
-            style = "margin-bottom: 20px;", 
-            
-            div(
-              style = "border-bottom: 1px solid #eeeeee; padding-bottom: 12px; margin-bottom: 15px; 
+            style = "border-bottom: 1px solid #eeeeee; padding-bottom: 12px; margin-bottom: 15px; 
                        position: relative; z-index: 10; background-color: white;",
-              h3("3D Figure View", 
-                 style = "color: #337ab7; font-weight: 700; margin: 0; font-size: 22px; border: none !important;")
-            ),
-            div(
-              style = "margin-top: -30px; margin-bottom: -20px; position: relative; z-index: 1;", 
-              plotlyOutput(ns("plot_3d"), height = "550px") 
+            h3(
+              "3D Figure View",
+              style = "color: #337ab7; font-weight: 700; margin: 0; font-size: 22px; border: none !important;"
             )
           ),
-          
-          # Controls
           div(
-            class = "card-style",
-            style = "background-color: #fcfcfc; border: 1px solid #e9ecef; border-radius: 8px; padding: 20px;", 
-            
-            div(
-              class = "slice-radio-container", 
-              style = "display: flex; align-items: center; margin-bottom: 15px;",
-              tags$strong("Slice Dimension:", style = "font-size: 16px; margin-right: 20px; color: #333;"),
-              radioButtons(
-                ns("slice_dim"),
-                label = NULL,
-                choices = c("Period" = "period", "Age" = "age", "Cohort" = "cohort", "Null" = "null"),
-                inline = TRUE
-              )
-            ),
-            div(
-              style = "border-top: 1px dashed #dee2e6; padding-top: 15px;",
-              uiOutput(ns("slider_ui"))
-            ),
-            div(
-              style = "color: #888; font-size: 0.9em; margin-top: 5px; text-align: left;",
-              icon("info-circle"),
-              " Drag the slider above or click anywhere on the 3D figure to update the 2D slice."
-            )
+            style = "margin-top: -30px; margin-bottom: -20px; position: relative; z-index: 1;",
+            plotlyOutput(ns("plot_3d"), height = "550px")
           )
+        ),
+
+        # Controls
+        div(
+          class = "card-style",
+          style = "background-color: #fcfcfc; border: 1px solid #e9ecef; border-radius: 8px; padding: 20px;",
+
+          div(
+            class = "slice-radio-container",
+            style = "display: flex; align-items: center; margin-bottom: 15px;",
+            tags$strong(
+              "Slice Dimension:",
+              style = "font-size: 16px; margin-right: 20px; color: #333;"
+            ),
+            radioButtons(
+              ns("slice_dim"),
+              label = NULL,
+              choices = c(
+                "Period" = "period",
+                "Age" = "age",
+                "Cohort" = "cohort",
+                "Null" = "null"
+              ),
+              inline = TRUE
+            )
+          ),
+          div(
+            style = "border-top: 1px dashed #dee2e6; padding-top: 15px;",
+            uiOutput(ns("slider_ui"))
+          ),
+          div(
+            style = "color: #888; font-size: 0.9em; margin-top: 5px; text-align: left;",
+            icon("info-circle"),
+            " Drag the slider above or click anywhere on the 3D figure to update the 2D slice."
+          )
+        )
       ),
 
       ## --- Right Column (5/12) ---
-      div(class = "col-sm-5",
-          
-          # 2D View
+      div(
+        class = "col-sm-5",
+
+        # 2D View
+        div(
+          class = "card-style",
+          style = "display: flex; flex-direction: column;",
+
           div(
-            class = "card-style",
-            style = "display: flex; flex-direction: column;",
-            
-            div(
-              style = "border-bottom: 1px solid #eeeeee; padding-bottom: 12px; margin-bottom: 15px;",
-              h3("2D Slice View", 
-                 style = "color: #337ab7; font-weight: 700; margin: 0; font-size: 22px; border: none !important;")
-            ),
-            
-            div(
-              style = "flex-grow: 1;",
-              plotOutput(ns("plot_2d"), height = "500px") 
+            style = "border-bottom: 1px solid #eeeeee; padding-bottom: 12px; margin-bottom: 15px;",
+            h3(
+              "2D Slice View",
+              style = "color: #337ab7; font-weight: 700; margin: 0; font-size: 22px; border: none !important;"
             )
+          ),
+
+          div(
+            style = "flex-grow: 1;",
+            plotOutput(ns("plot_2d"), height = "500px")
           )
+        )
       )
     )
   )
@@ -138,7 +154,7 @@ mod_descriptive_server <- function(id, data_r) {
           selected = vals[max(1, floor(length(vals) / 2))],
           grid = TRUE,
           width = "100%",
-          animate = animationOptions(interval = 1000, loop = FALSE)
+          animate = animationOptions(interval = 2000, loop = FALSE)
         )
       } else {
         # age/cohort sliding block
@@ -160,7 +176,7 @@ mod_descriptive_server <- function(id, data_r) {
           value = median(vals),
           step = step_val,
           width = "100%",
-          animate = animationOptions(interval = 1000, loop = FALSE)
+          animate = animationOptions(interval = 2000, loop = FALSE)
         )
       }
     })

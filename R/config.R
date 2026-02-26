@@ -94,4 +94,9 @@ h3 {
   position: relative;
   top: 6px;
 }
+
+/* page top spacing: used to make all pages match Data Input spacing */
+.page-top {
+  margin-top: 16px;
+}
 "

@@ -3,7 +3,6 @@ mod_data_input_ui <- function(id) {
   ns <- NS(id)
 
   tagList(
-    br(),
     fluidRow(
       ## left: parameter card
       column(
@@ -425,14 +424,24 @@ mod_data_input_server <- function(id, parent_session) {
     })
 
     uploaded_data <- reactive({
-      # prefer sample-loaded data when present (so Load sample works without writing files)
+      # prefer newly uploaded/raw data when available; otherwise fall back to sample-loaded data
+      rd <- tryCatch(
+        {
+          raw_data()
+        },
+        error = function(e) NULL
+      )
+
+      if (!is.null(rd) && is.null(attr(rd, "error_msg"))) {
+        return(rd)
+      }
+
       samp <- sample_loaded_data()
-      # only use sample data if it does not carry an error attribute
       if (!is.null(samp) && is.null(attr(samp, "error_msg"))) {
         return(samp)
       }
-      df <- raw_data()
-      if (!is.null(df) && is.null(attr(df, "error_msg"))) df else NULL
+
+      NULL
     })
 
     # observe raw/sample reader for data errors and show a single notification
@@ -736,6 +745,7 @@ mod_data_input_server <- function(id, parent_session) {
       uploaded_data = uploaded_data,
       validation_error_msg = validation_error_msg,
       run_btn = reactive(input$run_btn),
+      proj_title = reactive(input$proj_title),
       params = reactive({
         list(
           intervals = input$intervals,

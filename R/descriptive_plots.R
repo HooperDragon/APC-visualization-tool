@@ -206,15 +206,31 @@ plot_2d_slice_generic <- function(df, slice_dim, slice_value) {
   } else if (slice_dim == "age") {
     plot_data <- df %>% filter(age_start == slice_value)
     x_col <- "period"
-    title_text <- paste0("Age Group = ", slice_value)
+    # use the age group label (e.g. "80-84") instead of raw start value
+    age_label <- plot_data %>% distinct(age_group) %>% pull(age_group)
+    if (length(age_label) == 0) {
+      title_text <- paste0("Age Group = ", slice_value)
+    } else {
+      title_text <- paste0("Age Group = ", age_label[1])
+    }
   } else if (slice_dim == "cohort") {
+    # determine cohort label from original df before aggregation
+    cohort_label <- df %>%
+      filter(cohort_start == slice_value) %>%
+      distinct(cohort_group) %>%
+      pull(cohort_group)
+
     plot_data <- df %>%
       filter(cohort_start == slice_value) %>%
       group_by(age_start, age_group) %>%
       summarise(rate = mean(rate, na.rm = TRUE), .groups = "drop")
 
     x_col <- "age_group"
-    title_text <- paste0("Cohort = ", slice_value)
+    if (length(cohort_label) == 0) {
+      title_text <- paste0("Cohort = ", slice_value)
+    } else {
+      title_text <- paste0("Cohort = ", cohort_label[1])
+    }
   }
 
   if (is.null(plot_data) || nrow(plot_data) == 0) {
