@@ -46,7 +46,9 @@ po/*~
 
 # RStudio Connect folder
 rsconnect/
+update to shiny.R
 
 # test examples
 tests/*
 !tests/small_test_data.RData
+

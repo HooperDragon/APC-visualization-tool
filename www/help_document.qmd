@@ -72,6 +72,25 @@ Principal Developer: Junyu Long, School of Public Health, Peking University.
 
 Technical Assistance: Supported by AI assistants for code optimization and UI refinement.
 
+## 1.4 Version
+### Latest version: v1.2.0 (2026-02-26)
+**Key Updates:**
+
+* fixed the upoload logic for sample data.
+* adjusted the automatic playing speed of the 3D figure.
+* added prefix to the downloaded tables for better organization.
+
+
+**History:**
+
+v1.1.0 (2026-02-23): 
+
+* Unified the style and added the help document.
+
+v1.0.0 (2026-02-20): 
+
+* Initial release with core HAPC modeling and 3D visualization features.
+
 # 2. User guideline
 
 ## 2.1 Data input
@@ -173,4 +192,4 @@ To better interpret complex models, we plan to introduce Hierarchical Partitioni
 We are developing an interactive figure editing module that will allow users to customize the appearance of their plots directly within the platform. This will include options for adjusting colors, fonts, axis labels, and other stylistic elements to enhance the visual appeal and clarity of the figures.
 
 # 5. Contact us
-Contact **longjunyuhooper@163.com** for assistance.
+Contact *longjunyuhooper@163.com* for assistance.
