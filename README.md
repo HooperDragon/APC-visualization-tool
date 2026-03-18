@@ -5,7 +5,7 @@ The primary aim of this platform is to conveniently facilitate Hierarchical Age
 
 A key highlight is the interactive 3D slicing capability, which transforms static data into dynamic visualizations to help researchers uncover hidden patterns within the Age-Period-Cohort structure.
 
-You can also conveniently use this platform through https://hooperdragon.shinyapps.io/hapc_visualization_app/.
+You can download the whole file, set the work directory here, and run the app.R to experience this platform. You can also conveniently use it through https://hooperdragon.shinyapps.io/hapc_visualization_app/.
 
 ## 1.2 Theoretical basis
 
